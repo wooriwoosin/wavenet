@@ -14,23 +14,23 @@
 
 const SPREADSHEET_ID = '1rFwSqrdn_QTIm_Nz6g386mrRREa-q4jMHnGlQ1uP03o';
 // 앱이 서버 버전을 확인하는 번호 (Code.gs 구조가 바뀌면 올림, index.html 의 REQUIRED_API_VERSION 과 맞춤)
-const API_VERSION = 4;
+const API_VERSION = 5;
 
 // 시트 구조 (유통 마진 분석)
 const SHEETS = {
-  summary: { name: '유통_월별요약', header: ['월', '고객수', '외부고객', '자점고객', '상부정산', '자점마진', '전체정산', '유통마진', '고객당마진', '1만원미만', '역마진', '저장일시', '저장자', '메모'] },
-  partner: { name: '유통_협력점별', header: ['월', '협력점', '자점', '고객수', '상부정산', '자점마진', '전체정산', '유통마진', '1만원미만', '역마진', '메모', '메모작성자', '메모수정일시'] },
-  low:     { name: '유통_저마진고객', header: ['월', '고객키', '고객명', '연락처', '협력점', '자점', '상부점', '통신사', '상품', '상부정산', '자점마진', '전체정산', '유통마진', '사유', '사유작성자', '사유수정일시', '구분'] },
-  category:{ name: '유통_구분별', header: ['월', '구분', '건수', '상부정산', '자점마진', '전체정산', '유통마진', '1만원미만', '역마진'] },
+  summary: { name: '유통_월별요약', header: ['월', '고객수', '외부고객', '자점고객', '상부정산', '자점마진', '전체정산', '유통마진', '고객당마진', '1만원미만', '역마진', '저장일시', '저장자', '메모', '본점인센'] },
+  partner: { name: '유통_협력점별', header: ['월', '협력점', '자점', '고객수', '상부정산', '자점마진', '전체정산', '유통마진', '1만원미만', '역마진', '메모', '메모작성자', '메모수정일시', '본점인센'] },
+  low:     { name: '유통_저마진고객', header: ['월', '고객키', '고객명', '연락처', '협력점', '자점', '상부점', '통신사', '상품', '상부정산', '자점마진', '전체정산', '유통마진', '사유', '사유작성자', '사유수정일시', '구분', '본점인센'] },
+  category:{ name: '유통_구분별', header: ['월', '구분', '건수', '상부정산', '자점마진', '전체정산', '유통마진', '1만원미만', '역마진', '본점인센'] },
 };
 // 시트 열 이름 ↔ 앱 필드
 const FIELD = {
   월: 'month', 고객수: 'customers', 외부고객: 'extCustomers', 자점고객: 'jaCustomers', 상부정산: 'upper', 자점마진: 'jaMargin',
   전체정산: 'total', 유통마진: 'margin', 고객당마진: 'perCustomer', '1만원미만': 'lowCount', 역마진: 'negCount', 저장일시: 'savedAt',
   저장자: 'savedBy', 메모: 'memo', 협력점: 'partner', 자점: 'ja', 고객키: 'key', 고객명: 'name', 연락처: 'phone', 상부점: 'upperShop',
-  통신사: 'carrier', 상품: 'products', 사유: 'reason', 사유작성자: 'reasonBy', 사유수정일시: 'reasonAt', 구분: 'category', 건수: 'customers', 메모작성자: 'memoBy', 메모수정일시: 'memoAt',
+  통신사: 'carrier', 상품: 'products', 사유: 'reason', 사유작성자: 'reasonBy', 사유수정일시: 'reasonAt', 구분: 'category', 건수: 'customers', 메모작성자: 'memoBy', 메모수정일시: 'memoAt', 본점인센: 'hqIncentive', 본점인센반영: 'hq',
 };
-const MONEY_COLS = ['상부정산', '자점마진', '전체정산', '유통마진', '고객당마진'];
+const MONEY_COLS = ['상부정산', '자점마진', '전체정산', '유통마진', '고객당마진', '본점인센'];
 
 // 초기 계정 (비밀번호 원문은 저장하지 않고 salt + SHA-256 해시만 보관)
 const DEFAULT_USERS = { admin: { salt: 'd4cbc8afee22be88', hash: 'ee7a69d5f5203cc5fdd7a26a1025969d387eb31004743ee681e18cd6e1a1471e' } };
