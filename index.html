@@ -493,6 +493,22 @@ function carrierOf(p) {
   if (a === '유선기타') return '유선기타';
   return { 'LG U+':'LG', 'HelloVision':'HV' }[a] || a;
 }
+const WIRED_ETC = '유선기타';
+const isWiredEtc = p => p.startsWith('유선기타');
+function baseCarrier(p) {
+  const [a, b] = p.split('_');
+  const m = { 'LG U+':'LG', 'HelloVision':'HV', 'LG':'LG' };
+  return a === '모바일' ? (m[b] || b || '모바일') : (m[a] || a);
+}
+// 건의 구분: 유선기타는 별도 카테고리, 그 외는 통신사 (모바일만 있으면 "모바일", 렌탈은 "렌탈")
+function categoryOf(prods) {
+  if (prods.some(isWiredEtc)) return WIRED_ETC;
+  if (prods.every(p => p.startsWith('렌탈'))) return '렌탈';
+  if (prods.every(p => p.startsWith('모바일_'))) return '모바일';
+  const main = prods.find(isInternet) || prods.find(p => !p.startsWith('모바일_')) || prods[0];
+  return baseCarrier(main);
+}
+const CATEGORY_ORDER = ['LG','SKB','SKYLIFE','HV','KT','SKT','모바일','렌탈',WIRED_ETC];
 // 분석 대상 행 (상부정산 파일 기준)
 function isTarget(r) {
   const shop = String(r['상부점']||'').trim(), p = String(r['상품명']||'').trim();
@@ -500,7 +516,6 @@ function isTarget(r) {
   if (String(r['개통상태']||'').trim() !== '개통완료') return false;
   if (!shop || isCodeShop(shop)) return false;
   if (EXCL_PRODUCT.some(k => p.includes(k))) return false;
-  if (p.startsWith('유선기타') && !isInternet(p)) return false;   // 유선기타는 "인터넷" 상품만
   if (p.startsWith('모바일_') && String(r['가입서비스']||'').includes('(기기)')) return false;   // 모바일 (기기) 제외, (유심)만
   return true;
 }
@@ -512,7 +527,7 @@ const amountOf = r => r ? n(r['약정금액']) + n(r['번들수수료']) + n(r['
 // 상태
 // ════════════════════════════════════════════════════════════════
 const fileRows = { s: null, j: null };
-const emptyDb = () => ({ summaries:[], partners:[], lows:[] });
+const emptyDb = () => ({ summaries:[], partners:[], lows:[], categories:[] });
 let db = emptyDb();          // 저장된 전체 데이터
 let currentCalc = null;      // 방금 계산한 결과
 let selectedMonth = null;    // 대시보드에서 선택한 월
@@ -547,8 +562,13 @@ const monthData = m => {
   if (!m) return null;
   const summary = db.summaries.find(s => s.month === m);
   if (!summary) return null;
-  return { month:m, summary, partners: db.partners.filter(p => p.month === m), lows: db.lows.filter(l => l.month === m) };
+  return { month:m, summary, partners: db.partners.filter(p => p.month === m), lows: db.lows.filter(l => l.month === m),
+           categories: sortCategories(db.categories.filter(c => c.month === m)) };
 };
+const sortCategories = arr => arr.slice().sort((a,b) => {
+  const ia = CATEGORY_ORDER.indexOf(a.category), ib = CATEGORY_ORDER.indexOf(b.category);
+  return (ia<0?50:ia) - (ib<0?50:ib) || a.category.localeCompare(b.category);
+});
 const jaTag = ja => ja ? '<span class="ja-badge">자점마진반영</span>' : '';
 
 function toast(msg, isErr) {
@@ -572,11 +592,11 @@ function deltaHtml(cur, prev, opt={}) {
 // 데이터 저장소 (구글 시트 / 로컬)
 // ════════════════════════════════════════════════════════════════
 const store = {
-  local() { try { return JSON.parse(lsGet(LS.local)) || emptyDb(); } catch(e) { return emptyDb(); } },
+  local() { try { return { ...emptyDb(), ...JSON.parse(lsGet(LS.local)) }; } catch(e) { return emptyDb(); } },
   async list() {
     if (isLocal()) return this.local();
     const j = await this.post({ action:'list' });
-    return { summaries:j.summaries||[], partners:j.partners||[], lows:j.lows||[] };
+    return { summaries:j.summaries||[], partners:j.partners||[], lows:j.lows||[], categories:j.categories||[] };
   },
   async post(body) {
     // Content-Type 을 지정하지 않으면 text/plain 으로 전송되어 CORS preflight 없이 Apps Script 로 전달됨
@@ -597,16 +617,17 @@ const store = {
       const kept = {}; d.lows.filter(l => l.month===m && l.reason).forEach(l => kept[l.key] = l);
       d.summaries = d.summaries.filter(x => x.month!==m).concat([{ ...calc.summary, month:m, savedAt:now, savedBy:'local', memo }]);
       d.partners = d.partners.filter(x => x.month!==m).concat(calc.partners.map(p => ({ ...p, month:m })));
+      d.categories = d.categories.filter(x => x.month!==m).concat(calc.categories.map(c => ({ ...c, month:m })));
       d.lows = d.lows.filter(x => x.month!==m).concat(lows.map(l => ({ ...l, month:m, reason:kept[l.key]?.reason||'', reasonBy:kept[l.key]?.reasonBy||'', reasonAt:kept[l.key]?.reasonAt||'' })));
       lsSet(LS.local, JSON.stringify(d));
       return { ok:true, keptReasons:Object.keys(kept).length };
     }
-    return this.post({ action:'save', month:calc.month, summary:calc.summary, partners:calc.partners, lows, memo });
+    return this.post({ action:'save', month:calc.month, summary:calc.summary, partners:calc.partners, categories:calc.categories, lows, memo });
   },
   async remove(month) {
     if (isLocal()) {
       const d = this.local();
-      ['summaries','partners','lows'].forEach(k => d[k] = d[k].filter(x => x.month !== month));
+      ['summaries','partners','lows','categories'].forEach(k => d[k] = d[k].filter(x => x.month !== month));
       lsSet(LS.local, JSON.stringify(d));
       return { ok:true };
     }
@@ -830,21 +851,23 @@ function analyze(sRows, jRows, month) {
     if (!j) unmatched++;
     const p = String(r['상품명']||'').trim(), partner = String(r['협력점']||'').trim();
     const name = String(r['고객명']||'').trim(), phone = String(r['명의자연락처']||'').trim();
-    const ck = name + '|' + phone.replace(/\D/g,'');
+    // 1건 = 이름+연락처+상부점 (+유선기타는 별도 카테고리). 상부점이 다르면 각각 별도 건
+    const shop = String(r['상부점']||'').trim();
+    const ck = [name, phone.replace(/\D/g,''), shop, isWiredEtc(p) ? WIRED_ETC : ''].join('|');
     let c = custMap.get(ck);
     if (!c) {
       c = { key: hashKey(ck), name, phone: maskPhone(phone), partner, ja: isJajeom(partner),
-            shops: new Set(), carriers: new Set(), prods: [], upper:0, jaMargin:0, total:0 };
+            shops: new Set(), carriers: new Set(), prods: [], rawProds: [], upper:0, jaMargin:0, total:0 };
       custMap.set(ck, c);
     }
     const up = amountOf(r), tot = amountOf(j), jm = isJajeom(partner) ? jaMarginOf(p) : 0;   // 자점마진은 행의 협력점 기준
     c.upper += up; c.total += tot; c.jaMargin += jm;
     c.shops.add(String(r['상부점']||'').trim()); c.carriers.add(carrierOf(p));
-    c.prods.push(p + (up||tot ? '' : '(0원)'));
+    c.prods.push(p + (up||tot ? '' : '(0원)')); c.rawProds.push(p);
   });
   const customers = [...custMap.values()].map(c => ({
     key:c.key, name:c.name, phone:c.phone, partner:c.partner, ja:c.ja,
-    upperShop:[...c.shops].join(', '), carrier:[...c.carriers].join(', '), products:c.prods.join(' + '),
+    upperShop:[...c.shops].join(', '), carrier:[...c.carriers].join(', '), products:c.prods.join(' + '), category:categoryOf(c.rawProds),
     upper:Math.round(c.upper), jaMargin:Math.round(c.jaMargin), total:Math.round(c.total),
     margin:Math.round(c.upper - c.jaMargin - c.total),
   }));
@@ -868,8 +891,17 @@ function buildResult(month, customers, unmatched) {
     if (c.margin < 0) p.negCount++;
   });
   const partners = [...pm.values()].sort((a,b) => b.margin - a.margin);
+  const cm = new Map();
+  customers.forEach(c => {
+    let x = cm.get(c.category);
+    if (!x) { x = { category:c.category, customers:0, upper:0, jaMargin:0, total:0, margin:0, lowCount:0, negCount:0 }; cm.set(c.category, x); }
+    x.customers++; x.upper += c.upper; x.jaMargin += c.jaMargin; x.total += c.total; x.margin += c.margin;
+    if (c.margin < LOW_MARGIN) x.lowCount++;
+    if (c.margin < 0) x.negCount++;
+  });
+  const categories = sortCategories([...cm.values()]);
   const lows = customers.filter(c => c.margin < LOW_MARGIN).sort((a,b) => a.margin - b.margin).map(c => ({ ...c, month }));
-  return { month, summary, partners, lows, customers, unmatched };
+  return { month, summary, partners, categories, lows, customers, unmatched };
 }
 
 function calculate() {
@@ -889,6 +921,8 @@ function calculate() {
         ${ruleNoteHtml()}
         <div class="kpi-row" id="cKpi"></div>
         ${r.unmatched ? `<div class="rule-note">ℹ️ 전체정산 파일에서 짝을 찾지 못한 상부정산 행 ${r.unmatched}건은 전체정산 0원으로 계산했습니다.</div>` : ''}
+        <div class="section-title">구분별 유통마진 (유선기타 별도)</div>
+        <div class="tbl-wrap">${categoryTableHtml(r.categories)}</div>
         <div class="section-title">1만원 미만 · 역마진 고객 (${r.lows.length}명)</div>
         <div class="tbl-wrap">${lowTableHtml(r.lows.slice(0,50), false)}</div>
         ${r.lows.length>50?`<div class="kpi-sub" style="margin:-1rem 0 1rem">상위 50명만 표시 · 저장 후 월별 대시보드에서 전체 확인</div>`:''}
@@ -944,7 +978,8 @@ function resetAll() {
 function ruleNoteHtml() {
   return `<div class="rule-note"><b>기준</b> 순수 이관건(상부점이 "숫자."로 시작하는 코드건 제외) · 정산종류 일반 · 개통완료 ·
     금액 = 약정금액+번들수수료+동판수수료 (차감내역·수납 미반영) · <b>유통마진 = 상부정산 − 자점마진 − 전체정산</b> · 고객 = 이름+연락처<br>
-    <span class="ja-badge" style="margin-left:0">자점마진반영</span> 자점(영업팀·사업부) 및 자점 상담 협력점(와이즐리·크레소티) 고객은 인터넷·모바일 1건당 10만원, SKYLIFE 모바일 5만원 차감 (TV·부가상품·렌탈 미반영) · 유선기타는 인터넷 상품만 · 모바일은 (기기) 제외</div>`;
+    <span class="ja-badge" style="margin-left:0">자점마진반영</span> 자점(영업팀·사업부) 및 자점 상담 협력점(와이즐리·크레소티) 고객은 인터넷·모바일 1건당 10만원, SKYLIFE 모바일 5만원 차감 (TV·부가상품·렌탈·CCTV·인터넷전화 미반영) · 모바일은 (기기) 제외<br>
+    <b>1건</b> = 이름+연락처+상부점 (상부점이 다르면 별도 건) · <b>유선기타는 별도 카테고리</b>: 인터넷·CCTV·인터넷전화·TV 모두 반영, 한 고객의 유선기타 상품은 1건 (인터넷 없이 CCTV·전화만 있어도 1건)</div>`;
 }
 
 function renderKpis(elId, s, p, clickable) {
@@ -995,6 +1030,21 @@ function partnerTableHtml(partners, opt={}) {
     </tr></tfoot>
   </table>`;
 }
+function categoryTableHtml(cats) {
+  if (!cats || !cats.length) return '';
+  const t = cats.reduce((s,c) => { ['customers','upper','jaMargin','total','margin','lowCount','negCount'].forEach(k => s[k]+=c[k]); return s; }, {customers:0,upper:0,jaMargin:0,total:0,margin:0,lowCount:0,negCount:0});
+  return `<table>
+    <thead><tr><th style="text-align:left">구분</th><th>건수</th><th>상부정산</th><th>자점마진</th><th>전체정산</th><th>유통마진</th><th>건당 마진</th><th>1만원 미만</th><th>역마진</th></tr></thead>
+    <tbody>${cats.map(c => `<tr ${c.category===WIRED_ETC?'style="background:#fafbff"':''}>
+      <td>${esc(c.category)}${c.category===WIRED_ETC?' <span class="low-badge" style="background:#e0e7ff;color:#3730a3">별도 카테고리</span>':''}</td>
+      <td style="color:var(--text)">${c.customers.toLocaleString()}</td><td>${fmt(c.upper)}</td><td>${c.jaMargin?fmt(c.jaMargin):'-'}</td><td>${fmt(c.total)}</td>
+      <td class="${c.margin>=0?'up':'dn'}">${fmt(c.margin)}</td><td>${c.customers?fmt(c.margin/c.customers):'-'}</td>
+      <td class="${c.lowCount?'dn':'muted'}">${c.lowCount||'-'}</td><td class="${c.negCount?'dn':'muted'}">${c.negCount||'-'}</td>
+    </tr>`).join('')}</tbody>
+    <tfoot><tr><td>합 계</td><td>${t.customers.toLocaleString()}</td><td>${fmt(t.upper)}</td><td>${fmt(t.jaMargin)}</td><td>${fmt(t.total)}</td>
+      <td class="${t.margin>=0?'up':'dn'}">${fmt(t.margin)}</td><td>${t.customers?fmt(t.margin/t.customers):'-'}</td><td>${t.lowCount}</td><td>${t.negCount}</td></tr></tfoot>
+  </table>`;
+}
 function sortPartners(k) {
   partnerSort = { key:k, asc: partnerSort.key===k ? !partnerSort.asc : k==='partner' };
   renderMonthView();
@@ -1003,13 +1053,13 @@ function sortPartners(k) {
 function lowTableHtml(lows, editable) {
   if (!lows.length) return `<div class="empty" style="border:none">해당 고객이 없습니다.</div>`;
   return `<table>
-    <thead><tr><th style="text-align:left">구분</th><th style="text-align:left">고객</th><th style="text-align:left">협력점 / 상부점</th><th style="text-align:left">통신사 / 상품</th>
+    <thead><tr><th style="text-align:left">구분</th><th style="text-align:left">고객</th><th style="text-align:left">협력점 / 상부점</th><th style="text-align:left">구분 / 상품</th>
       <th>상부정산</th><th>자점마진</th><th>전체정산</th><th>유통마진</th>${editable?'<th style="text-align:left">사유 (메모)</th>':''}</tr></thead>
     <tbody>${lows.map(l => `<tr>
       <td>${l.margin<0?'<span class="neg-badge">역마진</span>':'<span class="low-badge">1만원 미만</span>'}</td>
       <td class="cell2" style="min-width:90px"><b style="color:var(--text)">${esc(l.name)}</b><div class="sub2">${esc(l.phone)}</div></td>
       <td class="cell2">${esc(l.partner)}${jaTag(l.ja)}<div class="sub2">${esc(l.upperShop)}</div></td>
-      <td class="cell2" style="max-width:220px">${esc(l.carrier)}<div class="sub2">${esc(l.products)}</div></td>
+      <td class="cell2" style="max-width:220px">${esc(l.category||l.carrier)}${l.category===WIRED_ETC?'':` <span style="color:var(--text3)">${esc(l.carrier)}</span>`}<div class="sub2">${esc(l.products)}</div></td>
       <td>${fmt(l.upper)}</td><td>${l.jaMargin?fmt(l.jaMargin):'-'}</td><td>${fmt(l.total)}</td>
       <td class="${l.margin<0?'dn':''}" style="${l.margin>=0?'color:var(--yellow);font-weight:600':''}">${fmt(l.margin)}</td>
       ${editable?`<td class="reason-cell"><textarea data-key="${esc(l.key)}" placeholder="사유 입력 후 칸 밖을 클릭하면 저장" onchange="saveReason(this)">${esc(l.reason||'')}</textarea>
@@ -1069,6 +1119,7 @@ function renderMonthView() {
     ${d.lows.length ? `<div class="rule-note" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       📝 1만원 미만 고객 <b>${d.lows.length}명</b> 중 사유 작성 <b>${d.lows.length-todo}명</b> / 미작성 <b style="color:var(--red)">${todo}명</b>
       <button class="dl-btn primary" style="padding:6px 14px" onclick="openCheck('todo')">사유 작성하기 ›</button></div>` : ''}
+    ${d.categories.length ? `<div class="section-title">구분별 유통마진 (유선기타 별도)</div><div class="tbl-wrap">${categoryTableHtml(d.categories)}</div>` : ''}
     <div class="section-title">협력점별 유통마진 <span style="text-transform:none;letter-spacing:0;font-weight:400">— 행을 누르면 해당 협력점의 1만원 미만 고객을 볼 수 있습니다</span></div>
     <div class="tbl-wrap">${partnerTableHtml(d.partners, {sortable:true, click:true, limit:20})}</div>
     <div class="chart-grid">
@@ -1266,6 +1317,8 @@ function buildSlides(month) {
           <div class="s-kpi"><div class="l">고객당 마진</div><div class="v">${fmt(s.perCustomer)}원</div><div class="d">${dl(s.perCustomer, p&&p.perCustomer, {won:true})}</div></div>
           <div class="s-kpi"><div class="l">1만원 미만 / 역마진 고객</div><div class="v ${s.negCount?'dn':''}">${s.lowCount} / ${s.negCount}명</div><div class="d">${dl(s.negCount, p&&p.negCount, {count:true, inverse:true})} (역마진)</div></div>
         </div>` },
+    ...(d.categories.length ? [{ html:`<div class="s-kicker">${kicker}</div><h1>구분별 유통마진</h1>
+        <div class="tbl-wrap" style="box-shadow:none;border:1px solid var(--border)">${categoryTableHtml(d.categories)}</div>` }] : []),
     { html:`<div class="s-kicker">${kicker}</div><h1>협력점별 유통마진 (상위 8)</h1>
         <div class="tbl-wrap" style="box-shadow:none;border:1px solid var(--border)">${partnerTableHtml(topPartners, {compact:true})}</div>` },
     { html:`<div class="s-kicker">${kicker}</div><h1>협력점별 유통마진</h1>
@@ -1352,8 +1405,8 @@ window.addEventListener('resize', () => { if (slides.length) gotoSlide(slideIdx)
 // ════════════════════════════════════════════════════════════════
 const partnerAoa = ps => [['협력점','자점','고객수','상부정산','자점마진','전체정산','유통마진','고객당마진','1만원미만','역마진'],
   ...ps.map(p => [p.partner, p.ja?'자점마진반영':'', p.customers, p.upper, p.jaMargin, p.total, p.margin, p.customers?Math.round(p.margin/p.customers):0, p.lowCount, p.negCount])];
-const lowAoa = ls => [['구분','고객명','연락처','협력점','자점','상부점','통신사','상품','상부정산','자점마진','전체정산','유통마진','사유','사유작성자'],
-  ...ls.map(l => [l.margin<0?'역마진':'1만원 미만', l.name, l.phone, l.partner, l.ja?'자점마진반영':'', l.upperShop, l.carrier, l.products, l.upper, l.jaMargin, l.total, l.margin, l.reason||'', l.reasonBy||''])];
+const lowAoa = ls => [['마진구분','상품구분','고객명','연락처','협력점','자점','상부점','통신사','상품','상부정산','자점마진','전체정산','유통마진','사유','사유작성자'],
+  ...ls.map(l => [l.margin<0?'역마진':'1만원 미만', l.category||'', l.name, l.phone, l.partner, l.ja?'자점마진반영':'', l.upperShop, l.carrier, l.products, l.upper, l.jaMargin, l.total, l.margin, l.reason||'', l.reasonBy||''])];
 function sheetOf(aoa, widths) { const ws = XLSX.utils.aoa_to_sheet(aoa); ws['!cols'] = widths.map(w=>({wch:w})); return ws; }
 function downloadMonthExcel(data) {
   if (!data) { toast('다운로드할 데이터가 없습니다.', true); return; }
@@ -1363,15 +1416,17 @@ function downloadMonthExcel(data) {
     ['상부정산', s.upper], ['자점마진', s.jaMargin], ['전체정산', s.total], ['유통마진', s.margin], ['고객당 마진', s.perCustomer],
     ['1만원 미만 고객', s.lowCount], ['역마진 고객', s.negCount],
   ], [24,16]), '요약');
+  XLSX.utils.book_append_sheet(wb, sheetOf([['구분','건수','상부정산','자점마진','전체정산','유통마진','건당마진','1만원미만','역마진'],
+    ...(data.categories||[]).map(c => [c.category, c.customers, c.upper, c.jaMargin, c.total, c.margin, c.customers?Math.round(c.margin/c.customers):0, c.lowCount, c.negCount])], [12,8,14,12,14,14,12,10,8]), '구분별');
   XLSX.utils.book_append_sheet(wb, sheetOf(partnerAoa(data.partners), [26,12,8,14,12,14,14,12,10,8]), '협력점별');
-  XLSX.utils.book_append_sheet(wb, sheetOf(lowAoa(data.lows), [10,10,16,24,12,24,12,40,12,10,12,12,40,10]), '1만원미만_역마진');
+  XLSX.utils.book_append_sheet(wb, sheetOf(lowAoa(data.lows), [10,10,10,16,24,12,24,12,40,12,10,12,12,40,10]), '1만원미만_역마진');
   XLSX.writeFile(wb, `유통사업부_유통마진_${data.month}.xlsx`);
 }
 function downloadLowExcel() {
   const rows = checkRows();
   const list = check.partner ? rows.filter(l => l.partner === check.partner) : rows;
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, sheetOf(lowAoa(list), [10,10,16,24,12,24,12,40,12,10,12,12,40,10]), '점검목록');
+  XLSX.utils.book_append_sheet(wb, sheetOf(lowAoa(list), [10,10,10,16,24,12,24,12,40,12,10,12,12,40,10]), '점검목록');
   XLSX.writeFile(wb, `유통사업부_저마진점검_${selectedMonth}.xlsx`);
 }
 function downloadAllExcel() {

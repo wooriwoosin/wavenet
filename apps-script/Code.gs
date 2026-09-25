@@ -17,14 +17,15 @@ const SPREADSHEET_ID = '1rFwSqrdn_QTIm_Nz6g386mrRREa-q4jMHnGlQ1uP03o';
 const SHEETS = {
   summary: { name: '유통_월별요약', header: ['월', '고객수', '외부고객', '자점고객', '상부정산', '자점마진', '전체정산', '유통마진', '고객당마진', '1만원미만', '역마진', '저장일시', '저장자', '메모'] },
   partner: { name: '유통_협력점별', header: ['월', '협력점', '자점', '고객수', '상부정산', '자점마진', '전체정산', '유통마진', '1만원미만', '역마진'] },
-  low:     { name: '유통_저마진고객', header: ['월', '고객키', '고객명', '연락처', '협력점', '자점', '상부점', '통신사', '상품', '상부정산', '자점마진', '전체정산', '유통마진', '사유', '사유작성자', '사유수정일시'] },
+  low:     { name: '유통_저마진고객', header: ['월', '고객키', '고객명', '연락처', '협력점', '자점', '상부점', '통신사', '상품', '상부정산', '자점마진', '전체정산', '유통마진', '사유', '사유작성자', '사유수정일시', '구분'] },
+  category:{ name: '유통_구분별', header: ['월', '구분', '건수', '상부정산', '자점마진', '전체정산', '유통마진', '1만원미만', '역마진'] },
 };
 // 시트 열 이름 ↔ 앱 필드
 const FIELD = {
   월: 'month', 고객수: 'customers', 외부고객: 'extCustomers', 자점고객: 'jaCustomers', 상부정산: 'upper', 자점마진: 'jaMargin',
   전체정산: 'total', 유통마진: 'margin', 고객당마진: 'perCustomer', '1만원미만': 'lowCount', 역마진: 'negCount', 저장일시: 'savedAt',
   저장자: 'savedBy', 메모: 'memo', 협력점: 'partner', 자점: 'ja', 고객키: 'key', 고객명: 'name', 연락처: 'phone', 상부점: 'upperShop',
-  통신사: 'carrier', 상품: 'products', 사유: 'reason', 사유작성자: 'reasonBy', 사유수정일시: 'reasonAt',
+  통신사: 'carrier', 상품: 'products', 사유: 'reason', 사유작성자: 'reasonBy', 사유수정일시: 'reasonAt', 구분: 'category', 건수: 'customers',
 };
 const MONEY_COLS = ['상부정산', '자점마진', '전체정산', '유통마진', '고객당마진'];
 
@@ -57,7 +58,7 @@ function doPost(e) {
     const lock = LockService.getScriptLock();
     lock.waitLock(20000);
     try {
-      if (body.action === 'save') return saveMonth_(user, body.month, body.summary || {}, body.partners || [], body.lows || [], body.memo || '');
+      if (body.action === 'save') return saveMonth_(user, body.month, body.summary || {}, body.partners || [], body.lows || [], body.memo || '', body.categories || []);
       if (body.action === 'delete') return deleteMonth_(body.month);
       if (body.action === 'reason') return setReason_(user, body.month, body.key, body.reason);
       throw new Error('알 수 없는 action: ' + body.action);
@@ -133,6 +134,9 @@ function sheet_(def) {
     sh.getRange(1, 1, 1, def.header.length).setFontWeight('bold').setBackground('#eef2fb');
     sh.setFrozenRows(1);
     sh.getRange('A:A').setNumberFormat('@'); // '2026-08' 이 날짜로 바뀌지 않도록 텍스트 고정
+  } else if (sh.getLastColumn() < def.header.length) {
+    // 열이 추가된 경우 (이전 버전 시트) 헤더만 뒤에 덧붙임
+    sh.getRange(1, 1, 1, def.header.length).setValues([def.header]).setFontWeight('bold').setBackground('#eef2fb');
   }
   return sh;
 }
@@ -166,7 +170,7 @@ function readSheet_(def) {
 }
 
 function listAll_(user) {
-  return { ok: true, user: user, summaries: readSheet_(SHEETS.summary), partners: readSheet_(SHEETS.partner), lows: readSheet_(SHEETS.low) };
+  return { ok: true, user: user, summaries: readSheet_(SHEETS.summary), partners: readSheet_(SHEETS.partner), lows: readSheet_(SHEETS.low), categories: readSheet_(SHEETS.category) };
 }
 
 function removeMonthRows_(sh, month) {
@@ -203,14 +207,15 @@ function writeRows_(def, objs) {
   if (last > 2) sh.getRange(2, 1, last - 1, def.header.length).sort([{ column: 1, ascending: true }]);
 }
 
-function saveMonth_(user, month, summary, partners, lows, memo) {
+function saveMonth_(user, month, summary, partners, lows, memo, categories) {
   validMonth_(month);
   if (!partners.length) throw new Error('저장할 데이터가 없습니다.');
   // 같은 월을 다시 저장해도 이미 적어둔 사유는 고객키 기준으로 유지
   const kept = {};
   readSheet_(SHEETS.low).filter(r => r.month === month && r.reason).forEach(r => { kept[r.key] = r; });
   const now = new Date();
-  [SHEETS.summary, SHEETS.partner, SHEETS.low].forEach(def => removeMonthRows_(sheet_(def), month));
+  [SHEETS.summary, SHEETS.partner, SHEETS.low, SHEETS.category].forEach(def => removeMonthRows_(sheet_(def), month));
+  writeRows_(SHEETS.category, categories.map(c => Object.assign({}, c, { month: month })));
   writeRows_(SHEETS.summary, [Object.assign({}, summary, { month: month, savedAt: now, savedBy: user, memo: memo })]);
   writeRows_(SHEETS.partner, partners.map(p => Object.assign({}, p, { month: month })));
   writeRows_(SHEETS.low, lows.map(l => {
@@ -222,7 +227,7 @@ function saveMonth_(user, month, summary, partners, lows, memo) {
 
 function deleteMonth_(month) {
   validMonth_(month);
-  [SHEETS.summary, SHEETS.partner, SHEETS.low].forEach(def => removeMonthRows_(sheet_(def), month));
+  [SHEETS.summary, SHEETS.partner, SHEETS.low, SHEETS.category].forEach(def => removeMonthRows_(sheet_(def), month));
   return { ok: true, month: month };
 }
 
