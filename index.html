@@ -133,8 +133,23 @@ td.muted{color:var(--text3)}
 .insights li{list-style:none;font-size:13px;color:var(--text2);padding:5px 0;display:flex;gap:8px}
 .insights li b{color:var(--text)}
 
+/* ── 로그인 ── */
+.login-bg{position:fixed;inset:0;background:linear-gradient(135deg,#eef3ff 0%,#f5f7fb 55%);z-index:800;display:none;align-items:center;justify-content:center;padding:16px}
+.login-bg.open{display:flex}
+.login-card{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:36px 32px;width:100%;max-width:380px;box-shadow:0 20px 50px rgba(30,50,120,.12)}
+.login-card .logo{font-size:18px;font-weight:700;margin-bottom:4px}
+.login-card .logo span{color:var(--accent)}
+.login-card .desc{font-size:12px;color:var(--text3);margin-bottom:24px}
+.login-card label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin:14px 0 6px}
+.login-card input{width:100%;border:1px solid var(--border2);border-radius:8px;padding:11px 12px;font-size:14px;font-family:inherit}
+.login-card input:focus{outline:2px solid rgba(59,110,247,.35);border-color:var(--accent)}
+.login-card .calc-btn{width:100%;margin-top:22px;padding:12px}
+.login-card .login-err{color:var(--red);font-size:12px;margin-top:12px;min-height:16px}
+.user-chip{font-size:12px;color:var(--text2);white-space:nowrap}
+.user-chip b{color:var(--text)}
+
 /* ── 모달 ── */
-.modal-bg{position:fixed;inset:0;background:rgba(15,20,40,.45);display:none;align-items:center;justify-content:center;z-index:500;padding:16px}
+.modal-bg{position:fixed;inset:0;background:rgba(15,20,40,.45);display:none;align-items:center;justify-content:center;z-index:850;padding:16px}
 .modal-bg.open{display:flex}
 .modal{background:var(--bg2);border-radius:14px;padding:24px;width:100%;max-width:520px;box-shadow:0 20px 50px rgba(0,0,0,.2)}
 .modal h3{font-size:16px;margin-bottom:6px}
@@ -208,6 +223,9 @@ td.muted{color:var(--text3)}
   <div class="header-right">
     <span class="conn" id="connBadge">연결 확인 중</span>
     <button class="icon-btn" onclick="refreshData(true)" title="구글 시트에서 다시 불러오기">↻ 새로고침</button>
+    <span class="user-chip" id="userChip" style="display:none"></span>
+    <button class="icon-btn" id="pwBtn" onclick="openPwModal()" style="display:none">비밀번호 변경</button>
+    <button class="icon-btn" id="logoutBtn" onclick="logout()" style="display:none">로그아웃</button>
     <button class="icon-btn" onclick="openSettings()">⚙ 설정</button>
     <button class="icon-btn present-btn" onclick="startPresentation()">▶ 발표 모드</button>
   </div>
@@ -319,11 +337,9 @@ td.muted{color:var(--text3)}
   <div class="modal">
     <h3>구글 시트 연동 설정</h3>
     <p>구글 시트에 붙인 Apps Script 웹앱 URL을 입력하세요. (설정 방법은 저장소 README 참고)<br>
-      URL을 비워두면 <b>로컬 모드</b>로 동작하며 이 브라우저에만 저장됩니다.</p>
+      URL을 비워두면 <b>로컬 모드</b>로 동작하며 이 브라우저에만 저장됩니다. URL을 바꾸면 다시 로그인해야 합니다.</p>
     <label for="cfgUrl">웹앱 URL</label>
     <input type="text" id="cfgUrl" placeholder="https://script.google.com/macros/s/.../exec">
-    <label for="cfgKey">API 키 (스크립트 속성 API_KEY 를 설정한 경우)</label>
-    <input type="password" id="cfgKey" placeholder="선택">
     <div class="test-msg" id="testMsg"></div>
     <div class="btn-row">
       <button class="dl-btn" onclick="testConnection()">연결 테스트</button>
@@ -331,6 +347,39 @@ td.muted{color:var(--text3)}
       <button class="calc-btn" style="padding:9px 22px" onclick="saveSettings()">저장</button>
     </div>
   </div>
+</div>
+
+<!-- 비밀번호 변경 -->
+<div class="modal-bg" id="pwModal">
+  <div class="modal">
+    <h3>비밀번호 변경</h3>
+    <label for="pwCur">현재 비밀번호</label>
+    <input type="password" id="pwCur" autocomplete="current-password">
+    <label for="pwNew">새 비밀번호 (6자 이상)</label>
+    <input type="password" id="pwNew" autocomplete="new-password">
+    <label for="pwNew2">새 비밀번호 확인</label>
+    <input type="password" id="pwNew2" autocomplete="new-password">
+    <div class="test-msg" id="pwMsg"></div>
+    <div class="btn-row">
+      <button class="dl-btn" onclick="closePwModal()">취소</button>
+      <button class="calc-btn" style="padding:9px 22px" onclick="changePassword()">변경</button>
+    </div>
+  </div>
+</div>
+
+<!-- 로그인 -->
+<div class="login-bg" id="loginScreen">
+  <form class="login-card" onsubmit="doLogin(event)">
+    <div class="logo">유통사업부 <span>도매 정산</span></div>
+    <div class="desc">계정으로 로그인하세요.</div>
+    <label for="loginId">아이디</label>
+    <input type="text" id="loginId" autocomplete="username" required>
+    <label for="loginPw">비밀번호</label>
+    <input type="password" id="loginPw" autocomplete="current-password" required>
+    <button class="calc-btn" id="loginBtn" type="submit">로그인</button>
+    <div class="login-err" id="loginErr"></div>
+    <div style="text-align:right;margin-top:6px"><a href="#" onclick="openSettings();return false" style="font-size:11px;color:var(--text3)">연결 설정</a></div>
+  </form>
 </div>
 
 <!-- 발표 모드 -->
@@ -355,12 +404,15 @@ td.muted{color:var(--text3)}
 // ════════════════════════════════════════════════════════════════
 // 팀 전체가 같은 URL을 쓰려면 여기에 Apps Script 웹앱 URL을 넣고 커밋하세요.
 const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbzuG7ZFHhFas7jt7i89ea2HDnRu1AZAWJq5-3g7iiiKeRcz8Ml9B5b1-LB4rn5zqeqATA/exec';
-const LS = { url:'wn_api_url', key:'wn_api_key', cache:'wn_cache_rows', local:'wn_local_rows' };
+const LS = { url:'wn_api_url', local:'wn_local_rows' };
+const SS_TOKEN = 'wn_token', SS_USER = 'wn_user';
 
 const lsGet = k => { try { return localStorage.getItem(k); } catch(e) { return null; } };
 const lsSet = (k,v) => { try { localStorage.setItem(k,v); } catch(e) {} };
 const apiUrl = () => (lsGet(LS.url) || DEFAULT_API_URL || '').trim();
-const apiKey = () => (lsGet(LS.key) || '').trim();
+const ssGet = k => { try { return sessionStorage.getItem(k); } catch(e) { return null; } };
+const ssSet = (k,v) => { try { v==null ? sessionStorage.removeItem(k) : sessionStorage.setItem(k,v); } catch(e) {} };
+const token = () => ssGet(SS_TOKEN) || '';
 const isLocal = () => !apiUrl();
 
 // ════════════════════════════════════════════════════════════════
@@ -453,19 +505,18 @@ function deltaHtml(cur, prev, opt={}) {
 const store = {
   async list() {
     if (isLocal()) return JSON.parse(lsGet(LS.local) || '[]');
-    const u = new URL(apiUrl());
-    u.searchParams.set('action','list');
-    if (apiKey()) u.searchParams.set('key', apiKey());
-    const res = await fetch(u.toString());
-    const j = await res.json();
-    if (!j.ok) throw new Error(j.error || '불러오기 실패');
-    return j.rows;
+    return (await this.post({ action:'list' })).rows;
   },
   async post(body) {
     // Content-Type 을 지정하지 않으면 text/plain 으로 전송되어 CORS preflight 없이 Apps Script 로 전달됨
-    const res = await fetch(apiUrl(), { method:'POST', body: JSON.stringify({ ...body, key: apiKey() }) });
+    const res = await fetch(apiUrl(), { method:'POST', body: JSON.stringify({ ...body, token: token() }) });
     const j = await res.json();
-    if (!j.ok) throw new Error(j.error || '요청 실패');
+    if (!j.ok) {
+      const msg = j.error || '요청 실패';
+      if (msg.startsWith('AUTH:')) { clearSession(); showLogin('로그인이 만료되었습니다. 다시 로그인하세요.'); }
+      const err = new Error(msg.replace(/^AUTH:\s*/, '')); err.auth = msg.startsWith('AUTH:');
+      throw err;
+    }
     return j;
   },
   async save(month, rows, memo) {
@@ -494,17 +545,19 @@ function setConn(state, text) {
 }
 
 async function refreshData(manual) {
+  updateUserUi();
   if (isLocal()) setConn('local', '로컬 모드');
+  else if (!token()) { allRows = []; setConn('err', '로그인 필요'); showLogin(); renderActiveView(); return; }
   else setConn('', '불러오는 중…');
   try {
     allRows = await store.list();
-    if (!isLocal()) { lsSet(LS.cache, JSON.stringify(allRows)); setConn('ok', '구글 시트 연결됨'); }
+    if (!isLocal()) setConn('ok', '구글 시트 연결됨');
     if (manual) toast(`${months().length}개월 데이터를 불러왔습니다.`);
   } catch (e) {
     console.error(e);
-    allRows = JSON.parse(lsGet(LS.cache) || '[]');
-    setConn('err', allRows.length ? '연결 실패 · 캐시 표시' : '연결 실패');
-    toast('구글 시트 불러오기 실패: ' + e.message, true);
+    allRows = [];
+    setConn('err', e.auth ? '로그인 필요' : '연결 실패');
+    if (!e.auth) toast('구글 시트 불러오기 실패: ' + e.message, true);
   }
   if (!selectedMonth || !months().includes(selectedMonth)) selectedMonth = months().slice(-1)[0] || null;
   updateMonthHint();
@@ -1133,30 +1186,89 @@ function downloadAllExcel() {
 // ════════════════════════════════════════════════════════════════
 function openSettings() {
   document.getElementById('cfgUrl').value = apiUrl();
-  document.getElementById('cfgKey').value = apiKey();
   document.getElementById('testMsg').textContent = '';
   document.getElementById('settingsModal').classList.add('open');
 }
 function closeSettings() { document.getElementById('settingsModal').classList.remove('open'); }
 async function testConnection() {
-  const url = document.getElementById('cfgUrl').value.trim(), key = document.getElementById('cfgKey').value.trim();
+  const url = document.getElementById('cfgUrl').value.trim();
   const msg = document.getElementById('testMsg');
   if (!url) { msg.style.color='var(--text3)'; msg.textContent='URL이 비어 있으면 로컬 모드로 동작합니다.'; return; }
   msg.style.color='var(--text3)'; msg.textContent='확인 중…';
   try {
-    const u = new URL(url); u.searchParams.set('action','ping'); if (key) u.searchParams.set('key', key);
+    const u = new URL(url); u.searchParams.set('action','ping');
     const j = await (await fetch(u.toString())).json();
     if (!j.ok) throw new Error(j.error);
     msg.style.color='var(--green)'; msg.textContent='✓ 연결 성공';
   } catch (e) { msg.style.color='var(--red)'; msg.textContent='✗ 연결 실패: ' + e.message; }
 }
 function saveSettings() {
-  lsSet(LS.url, document.getElementById('cfgUrl').value.trim());
-  lsSet(LS.key, document.getElementById('cfgKey').value.trim());
+  const url = document.getElementById('cfgUrl').value.trim();
+  if (url !== apiUrl()) clearSession();
+  lsSet(LS.url, url);
   closeSettings();
   refreshData(true);
 }
 document.getElementById('settingsModal').addEventListener('click', e => { if (e.target.id==='settingsModal') closeSettings(); });
+
+// ════════════════════════════════════════════════════════════════
+// 로그인
+// ════════════════════════════════════════════════════════════════
+function clearSession() { ssSet(SS_TOKEN, null); ssSet(SS_USER, null); allRows = []; updateUserUi(); }
+function updateUserUi() {
+  const user = ssGet(SS_USER), on = !isLocal() && !!token();
+  document.getElementById('userChip').style.display = on ? '' : 'none';
+  document.getElementById('userChip').innerHTML = on ? `<b>${esc(user||'')}</b> 님` : '';
+  document.getElementById('pwBtn').style.display = on ? '' : 'none';
+  document.getElementById('logoutBtn').style.display = on ? '' : 'none';
+}
+function showLogin(msg) {
+  if (slides.length) stopPresentation();
+  document.getElementById('loginErr').textContent = msg || '';
+  document.getElementById('loginScreen').classList.add('open');
+  setTimeout(() => document.getElementById(document.getElementById('loginId').value ? 'loginPw' : 'loginId').focus(), 50);
+}
+async function doLogin(e) {
+  e.preventDefault();
+  const id = document.getElementById('loginId').value.trim(), pw = document.getElementById('loginPw').value;
+  const btn = document.getElementById('loginBtn'), err = document.getElementById('loginErr');
+  if (isLocal()) { err.textContent = '연결 설정에서 웹앱 URL을 먼저 입력하세요.'; return; }
+  btn.disabled = true; err.textContent = '';
+  try {
+    const res = await fetch(apiUrl(), { method:'POST', body: JSON.stringify({ action:'login', id, password:pw }) });
+    const j = await res.json();
+    if (!j.ok) throw new Error(j.error || '로그인 실패');
+    ssSet(SS_TOKEN, j.token); ssSet(SS_USER, j.user);
+    document.getElementById('loginPw').value = '';
+    document.getElementById('loginScreen').classList.remove('open');
+    await refreshData(false);
+  } catch (e2) {
+    err.textContent = e2.message === 'Failed to fetch' ? '서버에 연결할 수 없습니다. 연결 설정을 확인하세요.' : e2.message;
+  } finally { btn.disabled = false; }
+}
+async function logout() {
+  try { await store.post({ action:'logout' }); } catch(e) {}
+  clearSession(); selectedMonth = null;
+  resetAll(); renderActiveView();
+  setConn('err', '로그인 필요'); showLogin();
+}
+function openPwModal() {
+  ['pwCur','pwNew','pwNew2'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('pwMsg').textContent = '';
+  document.getElementById('pwModal').classList.add('open');
+}
+function closePwModal() { document.getElementById('pwModal').classList.remove('open'); }
+async function changePassword() {
+  const cur = document.getElementById('pwCur').value, nx = document.getElementById('pwNew').value, nx2 = document.getElementById('pwNew2').value;
+  const msg = document.getElementById('pwMsg'); msg.style.color = 'var(--red)';
+  if (nx.length < 6) { msg.textContent = '새 비밀번호는 6자 이상이어야 합니다.'; return; }
+  if (nx !== nx2) { msg.textContent = '새 비밀번호가 일치하지 않습니다.'; return; }
+  try {
+    await store.post({ action:'changePassword', current:cur, next:nx });
+    closePwModal(); toast('비밀번호를 변경했습니다.');
+  } catch (e) { msg.textContent = e.message; }
+}
+document.getElementById('pwModal').addEventListener('click', e => { if (e.target.id==='pwModal') closePwModal(); });
 
 refreshData(false);
 </script>
