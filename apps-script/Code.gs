@@ -13,10 +13,20 @@
  */
 
 const SPREADSHEET_ID = '1rFwSqrdn_QTIm_Nz6g386mrRREa-q4jMHnGlQ1uP03o';
-const DATA_SHEET = '정산데이터';
-const SUMMARY_SHEET = '월별요약';
-const DATA_HEADER = ['월', '상품', '건수', '상부정산', '전체정산', '마진', '저장일시', '메모'];
-const SUMMARY_HEADER = ['월', '건수', '상부정산', '전체정산', '마진', '건당마진', '마진율(%)', '저장일시'];
+// 시트 구조 (유통 마진 분석)
+const SHEETS = {
+  summary: { name: '유통_월별요약', header: ['월', '고객수', '외부고객', '자점고객', '상부정산', '자점마진', '전체정산', '유통마진', '고객당마진', '1만원미만', '역마진', '저장일시', '저장자', '메모'] },
+  partner: { name: '유통_협력점별', header: ['월', '협력점', '자점', '고객수', '상부정산', '자점마진', '전체정산', '유통마진', '1만원미만', '역마진'] },
+  low:     { name: '유통_저마진고객', header: ['월', '고객키', '고객명', '연락처', '협력점', '자점', '상부점', '통신사', '상품', '상부정산', '자점마진', '전체정산', '유통마진', '사유', '사유작성자', '사유수정일시'] },
+};
+// 시트 열 이름 ↔ 앱 필드
+const FIELD = {
+  월: 'month', 고객수: 'customers', 외부고객: 'extCustomers', 자점고객: 'jaCustomers', 상부정산: 'upper', 자점마진: 'jaMargin',
+  전체정산: 'total', 유통마진: 'margin', 고객당마진: 'perCustomer', '1만원미만': 'lowCount', 역마진: 'negCount', 저장일시: 'savedAt',
+  저장자: 'savedBy', 메모: 'memo', 협력점: 'partner', 자점: 'ja', 고객키: 'key', 고객명: 'name', 연락처: 'phone', 상부점: 'upperShop',
+  통신사: 'carrier', 상품: 'products', 사유: 'reason', 사유작성자: 'reasonBy', 사유수정일시: 'reasonAt',
+};
+const MONEY_COLS = ['상부정산', '자점마진', '전체정산', '유통마진', '고객당마진'];
 
 // 초기 계정 (비밀번호 원문은 저장하지 않고 salt + SHA-256 해시만 보관)
 const DEFAULT_USERS = { admin: { salt: 'd4cbc8afee22be88', hash: 'ee7a69d5f5203cc5fdd7a26a1025969d387eb31004743ee681e18cd6e1a1471e' } };
@@ -30,7 +40,7 @@ function doGet(e) {
     const p = (e && e.parameter) || {};
     if (p.action === 'ping') return { ok: true, message: 'pong' };
     const user = auth_(p.token);
-    if ((p.action || 'list') === 'list') return { ok: true, user: user, rows: readAll_() };
+    if ((p.action || 'list') === 'list') return listAll_(user);
     throw new Error('알 수 없는 action: ' + p.action);
   });
 }
@@ -42,13 +52,14 @@ function doPost(e) {
     if (body.action === 'login') return login_(body.id, body.password);
     const user = auth_(body.token);
     if (body.action === 'logout') { CacheService.getScriptCache().remove('tok_' + body.token); return { ok: true }; }
-    if (body.action === 'list') return { ok: true, user: user, rows: readAll_() };
+    if (body.action === 'list') return listAll_(user);
     if (body.action === 'changePassword') return changePassword_(user, body.current, body.next);
     const lock = LockService.getScriptLock();
     lock.waitLock(20000);
     try {
-      if (body.action === 'save') return saveMonth_(body.month, body.rows || [], body.memo || '');
+      if (body.action === 'save') return saveMonth_(user, body.month, body.summary || {}, body.partners || [], body.lows || [], body.memo || '');
       if (body.action === 'delete') return deleteMonth_(body.month);
+      if (body.action === 'reason') return setReason_(user, body.month, body.key, body.reason);
       throw new Error('알 수 없는 action: ' + body.action);
     } finally {
       lock.releaseLock();
@@ -113,13 +124,13 @@ function handle_(fn) {
   return ContentService.createTextOutput(JSON.stringify(out)).setMimeType(ContentService.MimeType.JSON);
 }
 
-function sheet_(name, header) {
+function sheet_(def) {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  let sh = ss.getSheetByName(name);
-  if (!sh) sh = ss.insertSheet(name);
+  let sh = ss.getSheetByName(def.name);
+  if (!sh) sh = ss.insertSheet(def.name);
   if (sh.getLastRow() === 0) {
-    sh.appendRow(header);
-    sh.getRange(1, 1, 1, header.length).setFontWeight('bold').setBackground('#eef2fb');
+    sh.appendRow(def.header);
+    sh.getRange(1, 1, 1, def.header.length).setFontWeight('bold').setBackground('#eef2fb');
     sh.setFrozenRows(1);
     sh.getRange('A:A').setNumberFormat('@'); // '2026-08' 이 날짜로 바뀌지 않도록 텍스트 고정
   }
@@ -135,22 +146,27 @@ function validMonth_(m) {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(m || ''))) throw new Error('월 형식 오류(YYYY-MM): ' + m);
 }
 
-function readAll_() {
-  const sh = sheet_(DATA_SHEET, DATA_HEADER);
+function readSheet_(def) {
+  const sh = sheet_(def);
   const last = sh.getLastRow();
   if (last < 2) return [];
-  return sh.getRange(2, 1, last - 1, DATA_HEADER.length).getValues()
-    .filter(r => r[0] !== '' && r[1] !== '')
-    .map(r => ({
-      month: monthStr_(r[0]),
-      name: String(r[1]),
-      건수: Number(r[2]) || 0,
-      상부: Number(r[3]) || 0,
-      전체: Number(r[4]) || 0,
-      마진: Number(r[5]) || 0,
-      savedAt: r[6] instanceof Date ? r[6].toISOString() : String(r[6] || ''),
-      memo: String(r[7] || ''),
-    }));
+  return sh.getRange(2, 1, last - 1, def.header.length).getValues()
+    .filter(r => r[0] !== '')
+    .map(r => {
+      const o = {};
+      def.header.forEach((h, i) => {
+        let v = r[i];
+        if (h === '월') v = monthStr_(v);
+        else if (v instanceof Date) v = v.toISOString();
+        else if (h === '자점') v = v === 'Y' || v === true;
+        o[FIELD[h]] = v;
+      });
+      return o;
+    });
+}
+
+function listAll_(user) {
+  return { ok: true, user: user, summaries: readSheet_(SHEETS.summary), partners: readSheet_(SHEETS.partner), lows: readSheet_(SHEETS.low) };
 }
 
 function removeMonthRows_(sh, month) {
@@ -158,8 +174,7 @@ function removeMonthRows_(sh, month) {
   if (last < 2) return 0;
   const col = sh.getRange(2, 1, last - 1, 1).getValues();
   let removed = 0;
-  // 아래에서 위로 삭제 (연속 구간은 한 번에)
-  for (let i = col.length - 1; i >= 0; i--) {
+  for (let i = col.length - 1; i >= 0; i--) {   // 아래에서 위로, 연속 구간은 한 번에 삭제
     if (monthStr_(col[i][0]) !== month) continue;
     let start = i;
     while (start - 1 >= 0 && monthStr_(col[start - 1][0]) === month) start--;
@@ -170,59 +185,62 @@ function removeMonthRows_(sh, month) {
   return removed;
 }
 
-function saveMonth_(month, rows, memo) {
-  validMonth_(month);
-  if (!rows.length) throw new Error('저장할 데이터가 없습니다.');
-  const sh = sheet_(DATA_SHEET, DATA_HEADER);
-  const replaced = removeMonthRows_(sh, month);
-  const now = new Date();
-  const values = rows.map(r => [
-    month, String(r.name), Number(r.건수) || 0, Math.round(Number(r.상부) || 0),
-    Math.round(Number(r.전체) || 0), Math.round(Number(r.마진) || 0), now, memo,
-  ]);
+function writeRows_(def, objs) {
+  if (!objs.length) return;
+  const sh = sheet_(def);
+  const values = objs.map(o => def.header.map(h => {
+    const v = o[FIELD[h]];
+    if (h === '자점') return v ? 'Y' : '';
+    return v === undefined || v === null ? '' : v;
+  }));
   const start = sh.getLastRow() + 1;
   sh.getRange(start, 1, values.length, 1).setNumberFormat('@');
-  sh.getRange(start, 1, values.length, DATA_HEADER.length).setValues(values);
-  sh.getRange(start, 3, values.length, 4).setNumberFormat('#,##0');
-  sortByMonth_(sh, DATA_HEADER.length);
-  rebuildSummary_();
-  return { ok: true, month: month, saved: values.length, replaced: replaced };
+  sh.getRange(start, 1, values.length, def.header.length).setValues(values);
+  def.header.forEach((h, i) => {
+    if (MONEY_COLS.indexOf(h) >= 0) sh.getRange(start, i + 1, values.length, 1).setNumberFormat('#,##0');
+  });
+  const last = sh.getLastRow();
+  if (last > 2) sh.getRange(2, 1, last - 1, def.header.length).sort([{ column: 1, ascending: true }]);
+}
+
+function saveMonth_(user, month, summary, partners, lows, memo) {
+  validMonth_(month);
+  if (!partners.length) throw new Error('저장할 데이터가 없습니다.');
+  // 같은 월을 다시 저장해도 이미 적어둔 사유는 고객키 기준으로 유지
+  const kept = {};
+  readSheet_(SHEETS.low).filter(r => r.month === month && r.reason).forEach(r => { kept[r.key] = r; });
+  const now = new Date();
+  [SHEETS.summary, SHEETS.partner, SHEETS.low].forEach(def => removeMonthRows_(sheet_(def), month));
+  writeRows_(SHEETS.summary, [Object.assign({}, summary, { month: month, savedAt: now, savedBy: user, memo: memo })]);
+  writeRows_(SHEETS.partner, partners.map(p => Object.assign({}, p, { month: month })));
+  writeRows_(SHEETS.low, lows.map(l => {
+    const k = kept[l.key];
+    return Object.assign({}, l, { month: month, reason: k ? k.reason : '', reasonBy: k ? k.reasonBy : '', reasonAt: k && k.reasonAt ? new Date(k.reasonAt) : '' });
+  }));
+  return { ok: true, month: month, partners: partners.length, lows: lows.length, keptReasons: Object.keys(kept).length };
 }
 
 function deleteMonth_(month) {
   validMonth_(month);
-  const removed = removeMonthRows_(sheet_(DATA_SHEET, DATA_HEADER), month);
-  rebuildSummary_();
-  return { ok: true, month: month, removed: removed };
+  [SHEETS.summary, SHEETS.partner, SHEETS.low].forEach(def => removeMonthRows_(sheet_(def), month));
+  return { ok: true, month: month };
 }
 
-function sortByMonth_(sh, width) {
+function setReason_(user, month, key, reason) {
+  validMonth_(month);
+  const def = SHEETS.low, sh = sheet_(def);
   const last = sh.getLastRow();
-  if (last > 2) sh.getRange(2, 1, last - 1, width).sort([{ column: 1, ascending: true }]);
-}
-
-// 사람이 시트에서 바로 볼 수 있는 월별 요약 (저장/삭제 때마다 재생성)
-function rebuildSummary_() {
-  const rows = readAll_();
-  const by = {};
-  rows.forEach(r => {
-    const m = by[r.month] || (by[r.month] = { 건수: 0, 상부: 0, 전체: 0, 마진: 0, savedAt: r.savedAt });
-    m.건수 += r.건수; m.상부 += r.상부; m.전체 += r.전체; m.마진 += r.마진;
-  });
-  const sh = sheet_(SUMMARY_SHEET, SUMMARY_HEADER);
-  if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, SUMMARY_HEADER.length).clearContent();
-  const months = Object.keys(by).sort();
-  if (!months.length) return;
-  const values = months.map(m => {
-    const t = by[m];
-    return [m, t.건수, t.상부, t.전체, t.마진,
-      t.건수 ? Math.round(t.마진 / t.건수) : 0,
-      t.상부 ? Math.round(t.마진 / t.상부 * 1000) / 10 : 0,
-      t.savedAt ? new Date(t.savedAt) : ''];
-  });
-  sh.getRange(2, 1, values.length, 1).setNumberFormat('@');
-  sh.getRange(2, 1, values.length, SUMMARY_HEADER.length).setValues(values);
-  sh.getRange(2, 2, values.length, 5).setNumberFormat('#,##0');
+  if (last < 2) throw new Error('해당 고객을 찾을 수 없습니다.');
+  const keyCol = def.header.indexOf('고객키'), reasonCol = def.header.indexOf('사유');
+  const vals = sh.getRange(2, 1, last - 1, keyCol + 1).getValues();
+  for (let i = 0; i < vals.length; i++) {
+    if (monthStr_(vals[i][0]) === month && String(vals[i][keyCol]) === String(key)) {
+      const now = new Date();
+      sh.getRange(i + 2, reasonCol + 1, 1, 3).setValues([[String(reason || ''), reason ? user : '', reason ? now : '']]);
+      return { ok: true, reasonBy: reason ? user : '', reasonAt: reason ? now.toISOString() : '' };
+    }
+  }
+  throw new Error('해당 고객을 찾을 수 없습니다. 월 데이터를 다시 저장했는지 확인하세요.');
 }
 
 // 계정 추가/비밀번호 초기화: 편집기에서 아이디·비밀번호를 바꿔 실행
@@ -237,7 +255,6 @@ function addUser() {
 
 // 편집기에서 한 번 실행하면 권한 승인 + 시트 생성
 function setup() {
-  sheet_(DATA_SHEET, DATA_HEADER);
-  sheet_(SUMMARY_SHEET, SUMMARY_HEADER);
+  Object.keys(SHEETS).forEach(k => sheet_(SHEETS[k]));
   Logger.log('시트 준비 완료');
 }
