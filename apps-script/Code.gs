@@ -13,10 +13,13 @@
  */
 
 const SPREADSHEET_ID = '1rFwSqrdn_QTIm_Nz6g386mrRREa-q4jMHnGlQ1uP03o';
+// 앱이 서버 버전을 확인하는 번호 (Code.gs 구조가 바뀌면 올림, index.html 의 REQUIRED_API_VERSION 과 맞춤)
+const API_VERSION = 4;
+
 // 시트 구조 (유통 마진 분석)
 const SHEETS = {
   summary: { name: '유통_월별요약', header: ['월', '고객수', '외부고객', '자점고객', '상부정산', '자점마진', '전체정산', '유통마진', '고객당마진', '1만원미만', '역마진', '저장일시', '저장자', '메모'] },
-  partner: { name: '유통_협력점별', header: ['월', '협력점', '자점', '고객수', '상부정산', '자점마진', '전체정산', '유통마진', '1만원미만', '역마진'] },
+  partner: { name: '유통_협력점별', header: ['월', '협력점', '자점', '고객수', '상부정산', '자점마진', '전체정산', '유통마진', '1만원미만', '역마진', '메모', '메모작성자', '메모수정일시'] },
   low:     { name: '유통_저마진고객', header: ['월', '고객키', '고객명', '연락처', '협력점', '자점', '상부점', '통신사', '상품', '상부정산', '자점마진', '전체정산', '유통마진', '사유', '사유작성자', '사유수정일시', '구분'] },
   category:{ name: '유통_구분별', header: ['월', '구분', '건수', '상부정산', '자점마진', '전체정산', '유통마진', '1만원미만', '역마진'] },
 };
@@ -25,7 +28,7 @@ const FIELD = {
   월: 'month', 고객수: 'customers', 외부고객: 'extCustomers', 자점고객: 'jaCustomers', 상부정산: 'upper', 자점마진: 'jaMargin',
   전체정산: 'total', 유통마진: 'margin', 고객당마진: 'perCustomer', '1만원미만': 'lowCount', 역마진: 'negCount', 저장일시: 'savedAt',
   저장자: 'savedBy', 메모: 'memo', 협력점: 'partner', 자점: 'ja', 고객키: 'key', 고객명: 'name', 연락처: 'phone', 상부점: 'upperShop',
-  통신사: 'carrier', 상품: 'products', 사유: 'reason', 사유작성자: 'reasonBy', 사유수정일시: 'reasonAt', 구분: 'category', 건수: 'customers',
+  통신사: 'carrier', 상품: 'products', 사유: 'reason', 사유작성자: 'reasonBy', 사유수정일시: 'reasonAt', 구분: 'category', 건수: 'customers', 메모작성자: 'memoBy', 메모수정일시: 'memoAt',
 };
 const MONEY_COLS = ['상부정산', '자점마진', '전체정산', '유통마진', '고객당마진'];
 
@@ -39,7 +42,7 @@ const LOCK_SEC = 10 * 60;
 function doGet(e) {
   return handle_(() => {
     const p = (e && e.parameter) || {};
-    if (p.action === 'ping') return { ok: true, message: 'pong' };
+    if (p.action === 'ping') return { ok: true, message: 'pong', version: API_VERSION };
     const user = auth_(p.token);
     if ((p.action || 'list') === 'list') return listAll_(user);
     throw new Error('알 수 없는 action: ' + p.action);
@@ -49,7 +52,7 @@ function doGet(e) {
 function doPost(e) {
   return handle_(() => {
     const body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
-    if (body.action === 'ping') return { ok: true, message: 'pong' };
+    if (body.action === 'ping') return { ok: true, message: 'pong', version: API_VERSION };
     if (body.action === 'login') return login_(body.id, body.password);
     const user = auth_(body.token);
     if (body.action === 'logout') { CacheService.getScriptCache().remove('tok_' + body.token); return { ok: true }; }
@@ -61,6 +64,7 @@ function doPost(e) {
       if (body.action === 'save') return saveMonth_(user, body.month, body.summary || {}, body.partners || [], body.lows || [], body.memo || '', body.categories || []);
       if (body.action === 'delete') return deleteMonth_(body.month);
       if (body.action === 'reason') return setReason_(user, body.month, body.key, body.reason);
+      if (body.action === 'partnerMemo') return setPartnerMemo_(user, body.month, body.partner, body.memo);
       throw new Error('알 수 없는 action: ' + body.action);
     } finally {
       lock.releaseLock();
@@ -170,7 +174,7 @@ function readSheet_(def) {
 }
 
 function listAll_(user) {
-  return { ok: true, user: user, summaries: readSheet_(SHEETS.summary), partners: readSheet_(SHEETS.partner), lows: readSheet_(SHEETS.low), categories: readSheet_(SHEETS.category) };
+  return { ok: true, version: API_VERSION, user: user, summaries: readSheet_(SHEETS.summary), partners: readSheet_(SHEETS.partner), lows: readSheet_(SHEETS.low), categories: readSheet_(SHEETS.category) };
 }
 
 function removeMonthRows_(sh, month) {
@@ -217,12 +221,17 @@ function saveMonth_(user, month, summary, partners, lows, memo, categories) {
   [SHEETS.summary, SHEETS.partner, SHEETS.low, SHEETS.category].forEach(def => removeMonthRows_(sheet_(def), month));
   writeRows_(SHEETS.category, categories.map(c => Object.assign({}, c, { month: month })));
   writeRows_(SHEETS.summary, [Object.assign({}, summary, { month: month, savedAt: now, savedBy: user, memo: memo })]);
-  writeRows_(SHEETS.partner, partners.map(p => Object.assign({}, p, { month: month })));
+  const keptMemo = {};
+  readSheet_(SHEETS.partner).filter(r => r.month === month && r.memo).forEach(r => { keptMemo[r.partner] = r; });
+  writeRows_(SHEETS.partner, partners.map(p => {
+    const k = keptMemo[p.partner];
+    return Object.assign({}, p, { month: month, memo: k ? k.memo : '', memoBy: k ? k.memoBy : '', memoAt: k && k.memoAt ? new Date(k.memoAt) : '' });
+  }));
   writeRows_(SHEETS.low, lows.map(l => {
     const k = kept[l.key];
     return Object.assign({}, l, { month: month, reason: k ? k.reason : '', reasonBy: k ? k.reasonBy : '', reasonAt: k && k.reasonAt ? new Date(k.reasonAt) : '' });
   }));
-  return { ok: true, month: month, partners: partners.length, lows: lows.length, keptReasons: Object.keys(kept).length };
+  return { ok: true, version: API_VERSION, month: month, partners: partners.length, lows: lows.length, keptReasons: Object.keys(kept).length, keptMemos: Object.keys(keptMemo).length };
 }
 
 function deleteMonth_(month) {
@@ -231,21 +240,34 @@ function deleteMonth_(month) {
   return { ok: true, month: month };
 }
 
-function setReason_(user, month, key, reason) {
-  validMonth_(month);
-  const def = SHEETS.low, sh = sheet_(def);
+// 월 + 특정 열 값으로 행을 찾아 [내용, 작성자, 수정일시] 3칸을 갱신
+function updateNote_(def, month, matchHeader, matchValue, noteHeader, user, text) {
+  const sh = sheet_(def);
   const last = sh.getLastRow();
-  if (last < 2) throw new Error('해당 고객을 찾을 수 없습니다.');
-  const keyCol = def.header.indexOf('고객키'), reasonCol = def.header.indexOf('사유');
-  const vals = sh.getRange(2, 1, last - 1, keyCol + 1).getValues();
-  for (let i = 0; i < vals.length; i++) {
-    if (monthStr_(vals[i][0]) === month && String(vals[i][keyCol]) === String(key)) {
-      const now = new Date();
-      sh.getRange(i + 2, reasonCol + 1, 1, 3).setValues([[String(reason || ''), reason ? user : '', reason ? now : '']]);
-      return { ok: true, reasonBy: reason ? user : '', reasonAt: reason ? now.toISOString() : '' };
+  const matchCol = def.header.indexOf(matchHeader), noteCol = def.header.indexOf(noteHeader);
+  if (last >= 2) {
+    const vals = sh.getRange(2, 1, last - 1, matchCol + 1).getValues();
+    for (let i = 0; i < vals.length; i++) {
+      if (monthStr_(vals[i][0]) === month && String(vals[i][matchCol]) === String(matchValue)) {
+        const now = new Date();
+        sh.getRange(i + 2, noteCol + 1, 1, 3).setValues([[String(text || ''), text ? user : '', text ? now : '']]);
+        return { ok: true, by: text ? user : '', at: text ? now.toISOString() : '' };
+      }
     }
   }
-  throw new Error('해당 고객을 찾을 수 없습니다. 월 데이터를 다시 저장했는지 확인하세요.');
+  throw new Error('대상을 찾을 수 없습니다. 월 데이터를 다시 저장했는지 확인하세요.');
+}
+
+function setReason_(user, month, key, reason) {
+  validMonth_(month);
+  const r = updateNote_(SHEETS.low, month, '고객키', key, '사유', user, reason);
+  return { ok: true, reasonBy: r.by, reasonAt: r.at };
+}
+
+function setPartnerMemo_(user, month, partner, memo) {
+  validMonth_(month);
+  const r = updateNote_(SHEETS.partner, month, '협력점', partner, '메모', user, memo);
+  return { ok: true, memoBy: r.by, memoAt: r.at };
 }
 
 // 계정 추가/비밀번호 초기화: 편집기에서 아이디·비밀번호를 바꿔 실행

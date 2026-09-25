@@ -39,7 +39,7 @@ button{font-family:'Noto Sans KR',sans-serif}
 .icon-btn.present-btn{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:700}
 .icon-btn.present-btn:hover{background:var(--accent2)}
 
-.main{max-width:1100px;margin:0 auto;padding:2rem}
+.main{max-width:1320px;margin:0 auto;padding:2rem}
 .view{display:none}
 .view.active{display:block}
 .section-title{font-size:11px;font-weight:700;color:var(--text3);letter-spacing:.08em;text-transform:uppercase;margin-bottom:12px;margin-top:1.5rem}
@@ -162,6 +162,9 @@ td.muted{color:var(--text3)}
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);background:#1a1d2e;color:#fff;padding:10px 20px;border-radius:10px;font-size:13px;opacity:0;transition:all .25s;z-index:900;pointer-events:none;max-width:90vw}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 .toast.err{background:var(--red)}
+.banner{display:none;background:#fef2f2;border:1px solid rgba(220,38,38,.35);color:#991b1b;border-radius:10px;padding:12px 16px;font-size:13px;margin-bottom:1rem;line-height:1.6}
+.save-status{font-size:12px;font-weight:600;flex-basis:100%}
+.save-status.ok{color:var(--green)} .save-status.err{color:var(--red)} .save-status.busy{color:var(--text3)}
 
 /* ── 발표 모드 ── */
 .present{position:fixed;inset:0;background:#0f1428;z-index:1000;display:none;align-items:center;justify-content:center}
@@ -224,6 +227,23 @@ th.sortable{cursor:pointer;user-select:none} th.sortable:hover{color:var(--text)
 th.sorted::after{content:' ▾'} th.sorted.asc::after{content:' ▴'}
 tr.clickrow{cursor:pointer}
 td.name-cell{font-family:'Noto Sans KR',sans-serif !important}
+/* 접었다 펴는 섹션 */
+details.fold{background:var(--bg2);border:1px solid var(--border);border-radius:12px;margin-bottom:12px;box-shadow:0 1px 4px rgba(0,0,0,0.04)}
+details.fold>summary{list-style:none;cursor:pointer;padding:14px 18px;display:flex;align-items:center;gap:10px;font-size:13px;font-weight:700;color:var(--text)}
+details.fold>summary::-webkit-details-marker{display:none}
+details.fold>summary::before{content:'▸';color:var(--text3);font-size:12px;transition:transform .15s;display:inline-block}
+details.fold[open]>summary::before{transform:rotate(90deg)}
+details.fold>summary .meta{font-weight:400;font-size:12px;color:var(--text3)}
+details.fold>summary .meta b{color:var(--text2)}
+details.fold>summary:hover{background:var(--bg3);border-radius:12px}
+details.fold .fold-body{padding:0 12px 12px}
+details.fold .fold-body .tbl-wrap{margin-bottom:0}
+.fold-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:4px 6px 12px}
+.memo-cell{min-width:200px;width:24%;text-align:left !important;font-family:'Noto Sans KR',sans-serif !important}
+.memo-cell textarea{width:100%;min-height:32px;border:1px solid var(--border2);border-radius:6px;padding:6px 8px;font-size:12px;font-family:'Noto Sans KR',sans-serif;resize:vertical}
+.memo-cell textarea:focus{outline:2px solid rgba(59,110,247,.3);border-color:var(--accent)}
+.memo-cell textarea.saved{border-color:var(--green)}
+.link-btn{background:none;border:none;color:var(--red);font-weight:700;cursor:pointer;text-decoration:underline;font-family:'JetBrains Mono',monospace;font-size:11px;padding:0}
 /* 저마진 점검 창 */
 .check-modal{max-width:1280px;width:100%;height:min(92vh,900px);display:flex;flex-direction:column;padding:0;overflow:hidden}
 .check-head{padding:18px 22px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-wrap:wrap}
@@ -319,6 +339,7 @@ td.name-cell{font-family:'Noto Sans KR',sans-serif !important}
         <input type="text" id="saveMemo" placeholder="메모 (선택) — 예: 9월 24일 기준, 마감 전">
         <button class="calc-btn" id="saveBtn" onclick="saveCurrent()">💾 <span id="saveBtnLabel">구글 시트에 저장</span></button>
         <button class="dl-btn primary" onclick="downloadMonthExcel(currentCalc)">⬇ 엑셀 다운로드</button>
+        <div class="save-status" id="saveStatus"></div>
       </div>
     </div>
   </section>
@@ -453,6 +474,10 @@ td.name-cell{font-family:'Noto Sans KR',sans-serif !important}
 // 팀 전체가 같은 URL을 쓰려면 여기에 Apps Script 웹앱 URL을 넣고 커밋하세요.
 const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbzuG7ZFHhFas7jt7i89ea2HDnRu1AZAWJq5-3g7iiiKeRcz8Ml9B5b1-LB4rn5zqeqATA/exec';
 const LS = { url:'wn_api_url', local:'wn_local_v2' };
+// Apps Script(Code.gs)의 API_VERSION 이 이보다 낮으면 "재배포 필요" 안내
+const REQUIRED_API_VERSION = 4;
+let serverOld = false;
+const OLD_SERVER_MSG = '구글 Apps Script가 예전 버전입니다. 저장소의 apps-script/Code.gs 를 붙여넣고 [배포 → 배포 관리 → 연필(수정) → 버전: 새 버전 → 배포] 해주세요.';
 const SS_TOKEN = 'wn_token', SS_USER = 'wn_user';
 
 const lsGet = k => { try { return localStorage.getItem(k); } catch(e) { return null; } };
@@ -571,10 +596,15 @@ const sortCategories = arr => arr.slice().sort((a,b) => {
 });
 const jaTag = ja => ja ? '<span class="ja-badge">자점마진반영</span>' : '';
 
+function showBanner(msg) {
+  let el = document.getElementById('banner');
+  if (!el) { el = document.createElement('div'); el.id = 'banner'; el.className = 'banner'; document.querySelector('.main').prepend(el); }
+  el.innerHTML = msg ? '⚠️ ' + esc(msg) : ''; el.style.display = msg ? 'block' : 'none';
+}
 function toast(msg, isErr) {
   const el = document.getElementById('toast');
   el.textContent = msg; el.className = 'toast show' + (isErr?' err':'');
-  clearTimeout(toast._t); toast._t = setTimeout(()=>el.className='toast', 3000);
+  clearTimeout(toast._t); toast._t = setTimeout(()=>el.className='toast', isErr ? 8000 : 4000);
 }
 function showErr(msg) {
   const el=document.getElementById('errMsg');
@@ -596,6 +626,8 @@ const store = {
   async list() {
     if (isLocal()) return this.local();
     const j = await this.post({ action:'list' });
+    if (!(j.version >= REQUIRED_API_VERSION)) { serverOld = true; const e = new Error(OLD_SERVER_MSG); e.oldServer = true; throw e; }
+    serverOld = false;
     return { summaries:j.summaries||[], partners:j.partners||[], lows:j.lows||[], categories:j.categories||[] };
   },
   async post(body) {
@@ -616,13 +648,17 @@ const store = {
       const d = this.local(), m = calc.month, now = new Date().toISOString();
       const kept = {}; d.lows.filter(l => l.month===m && l.reason).forEach(l => kept[l.key] = l);
       d.summaries = d.summaries.filter(x => x.month!==m).concat([{ ...calc.summary, month:m, savedAt:now, savedBy:'local', memo }]);
-      d.partners = d.partners.filter(x => x.month!==m).concat(calc.partners.map(p => ({ ...p, month:m })));
+      const keptMemo = {}; d.partners.filter(x => x.month===m && x.memo).forEach(x => keptMemo[x.partner] = x);
+      d.partners = d.partners.filter(x => x.month!==m).concat(calc.partners.map(p => ({ ...p, month:m, memo:keptMemo[p.partner]?.memo||'', memoBy:keptMemo[p.partner]?.memoBy||'', memoAt:keptMemo[p.partner]?.memoAt||'' })));
       d.categories = d.categories.filter(x => x.month!==m).concat(calc.categories.map(c => ({ ...c, month:m })));
       d.lows = d.lows.filter(x => x.month!==m).concat(lows.map(l => ({ ...l, month:m, reason:kept[l.key]?.reason||'', reasonBy:kept[l.key]?.reasonBy||'', reasonAt:kept[l.key]?.reasonAt||'' })));
       lsSet(LS.local, JSON.stringify(d));
       return { ok:true, keptReasons:Object.keys(kept).length };
     }
-    return this.post({ action:'save', month:calc.month, summary:calc.summary, partners:calc.partners, categories:calc.categories, lows, memo });
+    if (serverOld) throw new Error(OLD_SERVER_MSG);
+    const j = await this.post({ action:'save', month:calc.month, summary:calc.summary, partners:calc.partners, categories:calc.categories, lows, memo });
+    if (!(j.version >= REQUIRED_API_VERSION)) throw new Error(OLD_SERVER_MSG);
+    return j;
   },
   async remove(month) {
     if (isLocal()) {
@@ -632,6 +668,16 @@ const store = {
       return { ok:true };
     }
     return this.post({ action:'delete', month });
+  },
+  async partnerMemo(month, partner, memo) {
+    if (isLocal()) {
+      const d = this.local(), p = d.partners.find(x => x.month===month && x.partner===partner);
+      if (!p) throw new Error('해당 협력점을 찾을 수 없습니다.');
+      p.memo = memo; p.memoBy = memo ? 'local' : ''; p.memoAt = memo ? new Date().toISOString() : '';
+      lsSet(LS.local, JSON.stringify(d));
+      return { ok:true, memoBy:p.memoBy, memoAt:p.memoAt };
+    }
+    return this.post({ action:'partnerMemo', month, partner, memo });
   },
   async reason(month, key, reason) {
     if (isLocal()) {
@@ -663,9 +709,11 @@ async function refreshData(manual) {
   } catch (e) {
     console.error(e);
     db = emptyDb();
-    setConn('err', e.auth ? '로그인 필요' : '연결 실패');
-    if (!e.auth) toast('구글 시트 불러오기 실패: ' + e.message, true);
+    setConn('err', e.auth ? '로그인 필요' : e.oldServer ? '서버 재배포 필요' : '연결 실패');
+    if (e.oldServer) showBanner(e.message);
+    else if (!e.auth) toast('구글 시트 불러오기 실패: ' + e.message, true);
   }
+  if (db.summaries.length || isLocal()) showBanner('');
   if (!selectedMonth || !months().includes(selectedMonth)) selectedMonth = months().slice(-1)[0] || null;
   updateMonthHint();
   renderActiveView();
@@ -890,7 +938,7 @@ function buildResult(month, customers, unmatched) {
     if (c.margin < LOW_MARGIN) p.lowCount++;
     if (c.margin < 0) p.negCount++;
   });
-  const partners = [...pm.values()].sort((a,b) => b.margin - a.margin);
+  const partners = [...pm.values()].sort((a,b) => b.margin/b.customers - a.margin/a.customers || b.margin - a.margin);
   const cm = new Map();
   customers.forEach(c => {
     let x = cm.get(c.category);
@@ -917,17 +965,15 @@ function calculate() {
       if (!r.customers.length) { showErr('분석 대상(이관건) 데이터가 없습니다. 파일을 확인해주세요.'); return; }
       currentCalc = r;
       document.getElementById('calcTitle').textContent = `${monthLabel(month)} 계산 결과 (미저장)`;
+      Object.keys(foldOpen).filter(k => k.startsWith('c')).forEach(k => delete foldOpen[k]);
       document.getElementById('calcBody').innerHTML = `
         ${ruleNoteHtml()}
         <div class="kpi-row" id="cKpi"></div>
         ${r.unmatched ? `<div class="rule-note">ℹ️ 전체정산 파일에서 짝을 찾지 못한 상부정산 행 ${r.unmatched}건은 전체정산 0원으로 계산했습니다.</div>` : ''}
-        <div class="section-title">구분별 유통마진 (유선기타 별도)</div>
-        <div class="tbl-wrap">${categoryTableHtml(r.categories)}</div>
-        <div class="section-title">1만원 미만 · 역마진 고객 (${r.lows.length}명)</div>
-        <div class="tbl-wrap">${lowTableHtml(r.lows.slice(0,50), false)}</div>
-        ${r.lows.length>50?`<div class="kpi-sub" style="margin:-1rem 0 1rem">상위 50명만 표시 · 저장 후 월별 대시보드에서 전체 확인</div>`:''}
-        <div class="section-title">협력점별 유통마진</div>
-        <div class="tbl-wrap">${partnerTableHtml(r.partners)}</div>`;
+        <div class="rule-note">📝 사유·메모는 <b>저장 후 월별 대시보드</b>에서 작성할 수 있습니다.</div>
+        ${foldHtml('cCat', '구분별 유통마진', '유선기타 별도', `<div class="tbl-wrap">${categoryTableHtml(r.categories)}</div>`)}
+        ${foldHtml('cPartner', '협력점별 유통마진', `고객당 마진 높은 순 · ${r.partners.length}개 협력점`, `<div class="tbl-wrap">${partnerTableHtml(r.partners)}</div>`)}
+        ${foldHtml('cLow', '1만원 미만 · 역마진 고객', `<b>${r.lows.length}</b>명 (역마진 <b style="color:var(--red)">${r.lows.filter(l=>l.margin<0).length}</b>)`, `<div class="tbl-wrap">${lowTableHtml(r.lows, false)}</div>`)}`;
       renderKpis('cKpi', r.summary, null, false);
       document.getElementById('calcResults').style.display = 'block';
       document.getElementById('calcResults').scrollIntoView({behavior:'smooth',block:'start'});
@@ -941,19 +987,26 @@ function calculate() {
   }, 50);
 }
 
+function setSaveStatus(cls, msg) { const el = document.getElementById('saveStatus'); el.className = 'save-status ' + cls; el.textContent = msg; }
 async function saveCurrent() {
   if (!currentCalc) return;
   const { month } = currentCalc;
-  if (months().includes(month) && !confirm(`${monthLabel(month)} 데이터가 이미 있습니다. 덮어쓸까요? (작성한 사유는 유지됩니다)`)) return;
+  if (months().includes(month) && !confirm(`${monthLabel(month)} 데이터가 이미 있습니다. 덮어쓸까요? (작성한 사유·메모는 유지됩니다)`)) return;
   const btn = document.getElementById('saveBtn');
   btn.disabled = true;
+  setSaveStatus('busy', `⏳ ${monthLabel(month)} 저장 중… (구글 시트 반영에 10초 정도 걸릴 수 있습니다)`);
   try {
     const res = await store.save(currentCalc, document.getElementById('saveMemo').value.trim());
-    toast(`${monthLabel(month)} 데이터를 저장했습니다.` + (res.keptReasons ? ` (기존 사유 ${res.keptReasons}건 유지)` : ''));
-    document.getElementById('calcTitle').textContent = `${monthLabel(month)} 계산 결과 (저장됨)`;
-    selectedMonth = month;
     await refreshData(false);
+    if (!months().includes(month)) throw new Error('저장 후 다시 불러왔지만 해당 월이 보이지 않습니다. 새로고침 후 다시 확인해주세요.');
+    const kept = [res.keptReasons ? `사유 ${res.keptReasons}건` : '', res.keptMemos ? `협력점 메모 ${res.keptMemos}건` : ''].filter(Boolean).join(', ');
+    const msg = `✅ ${monthLabel(month)} 저장 완료 — 고객 ${currentCalc.summary.customers.toLocaleString()}명, 유통마진 ${fmt(currentCalc.summary.margin)}원` + (kept ? ` (기존 ${kept} 유지)` : '');
+    setSaveStatus('ok', msg + ' · 월별 대시보드에서 확인하세요.');
+    document.getElementById('calcTitle').textContent = `${monthLabel(month)} 계산 결과 (저장됨)`;
+    toast(msg);
+    selectedMonth = month;
   } catch (e) {
+    setSaveStatus('err', '❌ 저장 실패: ' + e.message);
     toast('저장 실패: ' + e.message, true);
   } finally {
     btn.disabled = false;
@@ -969,12 +1022,19 @@ function resetAll() {
   });
   document.getElementById('calcResults').style.display='none';
   document.getElementById('saveMemo').value='';
+  setSaveStatus('', '');
   showErr('');
 }
 
 // ════════════════════════════════════════════════════════════════
 // 공통 렌더링
 // ════════════════════════════════════════════════════════════════
+const foldOpen = {};
+function foldHtml(id, title, meta, body, defaultOpen) {
+  const open = id in foldOpen ? foldOpen[id] : !!defaultOpen;
+  return `<details class="fold" id="${id}" ${open?'open':''} ontoggle="foldOpen[this.id]=this.open">
+    <summary>${title}<span class="meta">${meta||''}</span></summary><div class="fold-body">${body}</div></details>`;
+}
 function ruleNoteHtml() {
   return `<div class="rule-note"><b>기준</b> 순수 이관건(상부점이 "숫자."로 시작하는 코드건 제외) · 정산종류 일반 · 개통완료 ·
     금액 = 약정금액+번들수수료+동판수수료 (차감내역·수납 미반영) · <b>유통마진 = 상부정산 − 자점마진 − 전체정산</b> · 고객 = 이름+연락처<br>
@@ -998,35 +1058,38 @@ function renderKpis(elId, s, p, clickable) {
   </div>`).join('');
 }
 
-let partnerSort = { key:'margin', asc:false };
-let partnerShowAll = false;
+let partnerSort = { key:'perCustomer', asc:false };   // 기본: 고객당 마진 높은 순
 function partnerTableHtml(partners, opt={}) {
   const AMT = ['upper','jaMargin','total'];
   const cols = [['partner','협력점'],['customers','고객수'],['upper','상부정산'],['jaMargin','자점마진'],['total','전체정산'],['margin','유통마진'],['perCustomer','고객당 마진'],['lowCount','1만원 미만'],['negCount','역마진']]
     .filter(([k]) => !(opt.compact && AMT.includes(k)));
   const amt = html => opt.compact ? '' : html;
   const rows = partners.map(p => ({ ...p, perCustomer: p.customers ? p.margin/p.customers : 0 }));
-  if (opt.sortable) {
-    const {key, asc} = partnerSort;
-    rows.sort((a,b) => (key==='partner' ? a.partner.localeCompare(b.partner) : a[key]-b[key]) * (asc?1:-1));
-  }
+  const {key, asc} = opt.sortable ? partnerSort : { key:'perCustomer', asc:false };
+  rows.sort((a,b) => (key==='partner' ? a.partner.localeCompare(b.partner) : (a[key]-b[key]) || (a.margin-b.margin)) * (asc?1:-1));
   const t = rows.reduce((s,p) => { ['customers','upper','jaMargin','total','margin','lowCount','negCount'].forEach(k => s[k]+=p[k]); return s; }, {customers:0,upper:0,jaMargin:0,total:0,margin:0,lowCount:0,negCount:0});
-  const head = cols.map(([k,l],i) => `<th ${i===0?'style="text-align:left"':''} class="${opt.sortable?'sortable':''} ${opt.sortable&&partnerSort.key===k?'sorted'+(partnerSort.asc?' asc':''):''}" ${opt.sortable?`onclick="sortPartners('${k}')"`:''}>${l}</th>`).join('');
+  const head = cols.map(([k,l],i) => `<th ${i===0?'style="text-align:left"':''} class="${opt.sortable?'sortable':''} ${opt.sortable&&partnerSort.key===k?'sorted'+(partnerSort.asc?' asc':''):''}" ${opt.sortable?`onclick="sortPartners('${k}')"`:''}>${l}</th>`).join('')
+    + (opt.memo || opt.memoText ? '<th style="text-align:left">메모</th>' : '');
+  const lowCell = p => !p.lowCount ? '<td class="muted">-</td>'
+    : opt.click ? `<td><button class="link-btn" data-p="${esc(p.partner)}" onclick="openCheck('low', this.dataset.p)" title="이 협력점의 1만원 미만 고객 보기">${p.lowCount}</button></td>`
+    : `<td class="dn">${p.lowCount}</td>`;
   return `<table>
     <thead><tr>${head}</tr></thead>
-    <tbody>${(opt.limit && !partnerShowAll ? rows.slice(0, opt.limit) : rows).map(p => `<tr ${opt.click?`class="clickrow" data-p="${esc(p.partner)}" onclick="openCheck('low', this.dataset.p)" title="이 협력점의 1만원 미만 고객 보기"`:''}>
+    <tbody>${rows.map(p => `<tr>
       <td>${esc(p.partner)}${jaTag(p.ja)}</td>
       <td style="color:var(--text)">${p.customers.toLocaleString()}</td>
       ${amt(`<td>${fmt(p.upper)}</td><td>${p.jaMargin?fmt(p.jaMargin):'-'}</td><td>${fmt(p.total)}</td>`)}
       <td class="${p.margin>=0?'up':'dn'}">${fmt(p.margin)}</td>
-      <td class="${p.perCustomer>=LOW_MARGIN?'':'dn'}">${fmt(p.perCustomer)}</td>
-      <td class="${p.lowCount?'dn':'muted'}">${p.lowCount||'-'}</td>
+      <td class="${p.perCustomer>=LOW_MARGIN?'':'dn'}" style="font-weight:700">${fmt(p.perCustomer)}</td>
+      ${lowCell(p)}
       <td class="${p.negCount?'dn':'muted'}">${p.negCount||'-'}</td>
-    </tr>`).join('')}
-    ${opt.limit && rows.length > opt.limit ? `<tr><td colspan="${cols.length}" class="more-row"><button class="dl-btn" onclick="partnerShowAll=!partnerShowAll;renderMonthView()">${partnerShowAll ? '접기 ▴' : `전체 ${rows.length}개 협력점 보기 ▾`}</button></td></tr>` : ''}</tbody>
+      ${opt.memo ? `<td class="memo-cell"><textarea data-p="${esc(p.partner)}" placeholder="메모 입력 후 칸 밖을 클릭하면 저장" onchange="savePartnerMemo(this)">${esc(p.memo||'')}</textarea>
+        <div class="reason-meta">${p.memoBy?esc(p.memoBy)+' · '+new Date(p.memoAt).toLocaleString('ko-KR'):''}</div></td>` : ''}
+      ${opt.memoText ? `<td class="name-cell" style="text-align:left;white-space:normal">${esc(p.memo||'')}</td>` : ''}
+    </tr>`).join('')}</tbody>
     <tfoot><tr>
       <td>합 계 (${rows.length}개 협력점)</td><td>${t.customers.toLocaleString()}</td>${amt(`<td>${fmt(t.upper)}</td><td>${fmt(t.jaMargin)}</td><td>${fmt(t.total)}</td>`)}
-      <td class="${t.margin>=0?'up':'dn'}">${fmt(t.margin)}</td><td>${t.customers?fmt(t.margin/t.customers):'-'}</td><td>${t.lowCount}</td><td>${t.negCount}</td>
+      <td class="${t.margin>=0?'up':'dn'}">${fmt(t.margin)}</td><td>${t.customers?fmt(t.margin/t.customers):'-'}</td><td>${t.lowCount}</td><td>${t.negCount}</td>${opt.memo||opt.memoText?'<td></td>':''}
     </tr></tfoot>
   </table>`;
 }
@@ -1047,7 +1110,8 @@ function categoryTableHtml(cats) {
 }
 function sortPartners(k) {
   partnerSort = { key:k, asc: partnerSort.key===k ? !partnerSort.asc : k==='partner' };
-  renderMonthView();
+  const d = monthData(selectedMonth);
+  if (d) document.getElementById('mPartnerTable').innerHTML = partnerTableHtml(d.partners, {sortable:true, click:true, memo:true});
 }
 
 function lowTableHtml(lows, editable) {
@@ -1084,11 +1148,12 @@ function baseOptions(scale=1, yFmt=fmtAxis, tipFmt=v=>fmt(v)+'원', horizontal=f
 }
 function renderPartnerChart(id, partners, scale=1, topN=15) {
   destroyChart(id);
-  const top = partners.slice().sort((a,b)=>b.margin-a.margin).slice(0, topN);
+  const per = p => p.customers ? Math.round(p.margin/p.customers) : 0;
+  const top = partners.slice().sort((a,b)=>per(b)-per(a) || b.margin-a.margin).slice(0, topN);
   charts[id] = new Chart(document.getElementById(id), {
     type:'bar',
-    data:{ labels: top.map(p => p.partner + (p.ja?' (자점)':'')), datasets:[{ label:'유통마진', data: top.map(p=>p.margin),
-      backgroundColor: top.map(p => p.margin>=0 ? cssVar('--s1') : cssVar('--neg')), borderRadius:4*scale, borderSkipped:'start', maxBarThickness:22*scale }] },
+    data:{ labels: top.map(p => `${p.partner}${p.ja?' (자점)':''} · ${p.customers}명`), datasets:[{ label:'고객당 마진', data: top.map(per),
+      backgroundColor: top.map(p => per(p)>=0 ? cssVar('--s1') : cssVar('--neg')), borderRadius:4*scale, borderSkipped:'start', maxBarThickness:22*scale }] },
     options: baseOptions(scale, fmtAxis, v=>fmt(v)+'원', true),
   });
 }
@@ -1111,25 +1176,50 @@ function renderMonthView() {
   const prev = monthData(prevMonthOf(selectedMonth));
   const s = d.summary;
   const todo = d.lows.filter(l => !l.reason).length;
+  const negN = d.lows.filter(l => l.margin < 0).length;
   box.innerHTML = `
     <div class="page-head"><h2>${monthLabel(selectedMonth)} 유통마진</h2>
       <span class="sub">${s.savedAt?'저장 '+new Date(s.savedAt).toLocaleString('ko-KR'):''}${s.savedBy?' · '+esc(s.savedBy):''}${s.memo?' · '+esc(s.memo):''}</span></div>
     ${ruleNoteHtml()}
     <div class="kpi-row" id="mKpi"></div>
-    ${d.lows.length ? `<div class="rule-note" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      📝 1만원 미만 고객 <b>${d.lows.length}명</b> 중 사유 작성 <b>${d.lows.length-todo}명</b> / 미작성 <b style="color:var(--red)">${todo}명</b>
-      <button class="dl-btn primary" style="padding:6px 14px" onclick="openCheck('todo')">사유 작성하기 ›</button></div>` : ''}
-    ${d.categories.length ? `<div class="section-title">구분별 유통마진 (유선기타 별도)</div><div class="tbl-wrap">${categoryTableHtml(d.categories)}</div>` : ''}
-    <div class="section-title">협력점별 유통마진 <span style="text-transform:none;letter-spacing:0;font-weight:400">— 행을 누르면 해당 협력점의 1만원 미만 고객을 볼 수 있습니다</span></div>
-    <div class="tbl-wrap">${partnerTableHtml(d.partners, {sortable:true, click:true, limit:20})}</div>
-    <div class="chart-grid">
-      <div class="chart-card wide">
-        <div class="chart-title">협력점별 유통마진 (상위 15)</div>
-        <div class="chart-wrap" style="height:420px"><canvas id="mPartner"></canvas></div>
-      </div>
-    </div>`;
+    ${d.categories.length ? foldHtml('fCat', '구분별 유통마진', `유선기타 별도 · ${d.categories.length}개 구분`,
+        `<div class="tbl-wrap">${categoryTableHtml(d.categories)}</div>`) : ''}
+    ${foldHtml('fPartner', '협력점별 유통마진', `고객당 마진 높은 순 · ${d.partners.length}개 협력점 · 메모 <b>${d.partners.filter(p=>p.memo).length}</b>건 작성 · 열 제목을 누르면 정렬, 1만원 미만 숫자를 누르면 고객 목록`,
+        `<div class="tbl-wrap" id="mPartnerTable">${partnerTableHtml(d.partners, {sortable:true, click:true, memo:true})}</div>`)}
+    ${foldHtml('fLow', '1만원 미만 · 역마진 고객', `<b>${d.lows.length}</b>명 (역마진 <b style="color:var(--red)">${negN}</b>) · 사유 작성 <b>${d.lows.length-todo}</b> / 미작성 <b style="color:var(--red)">${todo}</b>`,
+        `<div class="fold-tools">
+          <div class="seg" id="inlineSeg">${[['low','전체'],['neg','역마진'],['todo','사유 미작성']].map(([f,l]) => `<button data-f="${f}" class="${inlineLow.f===f?'active':''}" onclick="inlineLow.f='${f}';renderInlineLow()">${l}</button>`).join('')}</div>
+          <input class="search" id="inlineSearch" placeholder="고객명·협력점·상부점·상품 검색" value="${esc(inlineLow.q)}" oninput="inlineLow.q=this.value;renderInlineLow()">
+          <select id="inlinePartner" class="search" style="width:auto" onchange="inlineLow.p=this.value;renderInlineLow()">
+            <option value="">전체 협력점</option>${[...new Set(d.lows.map(l=>l.partner))].sort().map(pt => `<option ${inlineLow.p===pt?'selected':''}>${esc(pt)}</option>`).join('')}
+          </select>
+          <span class="kpi-sub" id="inlineCount"></span>
+          <div class="spacer" style="flex:1"></div>
+          <button class="dl-btn" onclick="downloadMonthExcel(monthData(selectedMonth))">⬇ 엑셀</button>
+        </div>
+        <div class="tbl-wrap" id="mLowTable"></div>`)}
+    ${foldHtml('fChart', '협력점별 고객당 마진 차트', '상위 15',
+        `<div class="chart-wrap" style="height:440px;padding:0 8px"><canvas id="mPartner"></canvas></div>`)}`;
   renderKpis('mKpi', s, prev ? prev.summary : null, true);
-  renderPartnerChart('mPartner', d.partners);
+  renderInlineLow();
+  const chartFold = document.getElementById('fChart');
+  const drawChart = () => { if (chartFold.open) renderPartnerChart('mPartner', d.partners); };
+  chartFold.addEventListener('toggle', drawChart);
+  drawChart();
+}
+const inlineLow = { f:'low', q:'', p:'' };
+function renderInlineLow() {
+  const d = monthData(selectedMonth);
+  if (!d || !document.getElementById('mLowTable')) return;
+  const q = inlineLow.q.trim().toLowerCase();
+  let rows = d.lows;
+  if (inlineLow.f === 'neg') rows = rows.filter(l => l.margin < 0);
+  if (inlineLow.f === 'todo') rows = rows.filter(l => !l.reason);
+  if (inlineLow.p) rows = rows.filter(l => l.partner === inlineLow.p);
+  if (q) rows = rows.filter(l => [l.name,l.partner,l.upperShop,l.category,l.carrier,l.products,l.reason].join(' ').toLowerCase().includes(q));
+  document.querySelectorAll('#inlineSeg button').forEach(b => b.classList.toggle('active', b.dataset.f===inlineLow.f));
+  document.getElementById('inlineCount').textContent = `${rows.length}명 표시`;
+  document.getElementById('mLowTable').innerHTML = lowTableHtml(rows, true);
 }
 function selectMonth(m) { selectedMonth = m; renderMonthView(); }
 
@@ -1180,6 +1270,18 @@ function renderCheckList() {
   document.querySelectorAll('#checkSide button[data-p]').forEach(b => b.addEventListener('click', () => { check.partner = b.dataset.p; renderCheckList(); }));
   const list = check.partner ? rows.filter(l => l.partner === check.partner) : rows;
   document.getElementById('checkMain').innerHTML = lowTableHtml(list, true);
+}
+async function savePartnerMemo(el) {
+  const partner = el.dataset.p, memo = el.value.trim();
+  el.classList.remove('saved');
+  try {
+    const r = await store.partnerMemo(selectedMonth, partner, memo);
+    const p = db.partners.find(x => x.month===selectedMonth && x.partner===partner);
+    if (p) { p.memo = memo; p.memoBy = r.memoBy; p.memoAt = r.memoAt; }
+    el.classList.add('saved');
+    el.nextElementSibling.textContent = r.memoBy ? r.memoBy + ' · ' + new Date(r.memoAt).toLocaleString('ko-KR') : '';
+    toast('협력점 메모를 저장했습니다.');
+  } catch (e) { toast('메모 저장 실패: ' + e.message, true); }
 }
 async function saveReason(el) {
   const key = el.dataset.key, reason = el.value.trim();
@@ -1300,7 +1402,7 @@ function buildSlides(month) {
     const txt = opt.count ? (x>=0?'+':'')+x.toLocaleString()+'명' : (x>=0?'+':'-')+(opt.won?fmt(Math.abs(x))+'원':fmtM(Math.abs(x)));
     return `전월 대비 <b class="${x===0?'':good?'up':'dn'}">${txt}</b>`;
   };
-  const topPartners = d.partners.slice().sort((a,b)=>b.margin-a.margin).slice(0, 8);
+  const topPartners = d.partners.slice().sort((a,b)=>b.margin/b.customers-a.margin/a.customers || b.margin-a.margin).slice(0, 8);
   const negs = d.lows.filter(l => l.margin < 0).sort((a,b)=>a.margin-b.margin).slice(0, 8);
   const lowBy = new Map(); d.lows.forEach(l => lowBy.set(l.partner, (lowBy.get(l.partner)||0)+1));
   const lowTop = [...lowBy.entries()].sort((a,b)=>b[1]-a[1]).slice(0,6);
@@ -1319,9 +1421,9 @@ function buildSlides(month) {
         </div>` },
     ...(d.categories.length ? [{ html:`<div class="s-kicker">${kicker}</div><h1>구분별 유통마진</h1>
         <div class="tbl-wrap" style="box-shadow:none;border:1px solid var(--border)">${categoryTableHtml(d.categories)}</div>` }] : []),
-    { html:`<div class="s-kicker">${kicker}</div><h1>협력점별 유통마진 (상위 8)</h1>
-        <div class="tbl-wrap" style="box-shadow:none;border:1px solid var(--border)">${partnerTableHtml(topPartners, {compact:true})}</div>` },
-    { html:`<div class="s-kicker">${kicker}</div><h1>협력점별 유통마진</h1>
+    { html:`<div class="s-kicker">${kicker}</div><h1>협력점별 고객당 마진 (상위 8)</h1>
+        <div class="tbl-wrap" style="box-shadow:none;border:1px solid var(--border)">${partnerTableHtml(topPartners, {compact:true, memoText:true})}</div>` },
+    { html:`<div class="s-kicker">${kicker}</div><h1>협력점별 고객당 마진</h1>
         <div class="s-chart"><canvas id="pPartner"></canvas></div>`,
       charts: sc => renderPartnerChart('pPartner', d.partners, sc, 12) },
     { html:`<div class="s-kicker">${kicker}</div><h1>저마진 · 역마진 점검</h1>
@@ -1403,8 +1505,8 @@ window.addEventListener('resize', () => { if (slides.length) gotoSlide(slideIdx)
 // ════════════════════════════════════════════════════════════════
 // 엑셀 다운로드
 // ════════════════════════════════════════════════════════════════
-const partnerAoa = ps => [['협력점','자점','고객수','상부정산','자점마진','전체정산','유통마진','고객당마진','1만원미만','역마진'],
-  ...ps.map(p => [p.partner, p.ja?'자점마진반영':'', p.customers, p.upper, p.jaMargin, p.total, p.margin, p.customers?Math.round(p.margin/p.customers):0, p.lowCount, p.negCount])];
+const partnerAoa = ps => [['협력점','자점','고객수','상부정산','자점마진','전체정산','유통마진','고객당마진','1만원미만','역마진','메모'],
+  ...ps.slice().sort((a,b)=>b.margin/b.customers-a.margin/a.customers).map(p => [p.partner, p.ja?'자점마진반영':'', p.customers, p.upper, p.jaMargin, p.total, p.margin, p.customers?Math.round(p.margin/p.customers):0, p.lowCount, p.negCount, p.memo||''])];
 const lowAoa = ls => [['마진구분','상품구분','고객명','연락처','협력점','자점','상부점','통신사','상품','상부정산','자점마진','전체정산','유통마진','사유','사유작성자'],
   ...ls.map(l => [l.margin<0?'역마진':'1만원 미만', l.category||'', l.name, l.phone, l.partner, l.ja?'자점마진반영':'', l.upperShop, l.carrier, l.products, l.upper, l.jaMargin, l.total, l.margin, l.reason||'', l.reasonBy||''])];
 function sheetOf(aoa, widths) { const ws = XLSX.utils.aoa_to_sheet(aoa); ws['!cols'] = widths.map(w=>({wch:w})); return ws; }
@@ -1418,7 +1520,7 @@ function downloadMonthExcel(data) {
   ], [24,16]), '요약');
   XLSX.utils.book_append_sheet(wb, sheetOf([['구분','건수','상부정산','자점마진','전체정산','유통마진','건당마진','1만원미만','역마진'],
     ...(data.categories||[]).map(c => [c.category, c.customers, c.upper, c.jaMargin, c.total, c.margin, c.customers?Math.round(c.margin/c.customers):0, c.lowCount, c.negCount])], [12,8,14,12,14,14,12,10,8]), '구분별');
-  XLSX.utils.book_append_sheet(wb, sheetOf(partnerAoa(data.partners), [26,12,8,14,12,14,14,12,10,8]), '협력점별');
+  XLSX.utils.book_append_sheet(wb, sheetOf(partnerAoa(data.partners), [26,12,8,14,12,14,14,12,10,8,40]), '협력점별');
   XLSX.utils.book_append_sheet(wb, sheetOf(lowAoa(data.lows), [10,10,10,16,24,12,24,12,40,12,10,12,12,40,10]), '1만원미만_역마진');
   XLSX.writeFile(wb, `유통사업부_유통마진_${data.month}.xlsx`);
 }
@@ -1437,7 +1539,7 @@ function downloadAllExcel() {
     ['월','유통 고객수','외부 고객','자점 고객','상부정산','자점마진','전체정산','유통마진','고객당 마진','1만원 미만','역마진'],
     ...ms.map(m => { const s = monthData(m).summary; return [m, s.customers, s.extCustomers, s.jaCustomers, s.upper, s.jaMargin, s.total, s.margin, s.perCustomer, s.lowCount, s.negCount]; }),
   ], [10,10,10,10,14,12,14,14,12,10,8]), '월별요약');
-  ms.slice().reverse().forEach(m => XLSX.utils.book_append_sheet(wb, sheetOf(partnerAoa(monthData(m).partners), [26,12,8,14,12,14,14,12,10,8]), m));
+  ms.slice().reverse().forEach(m => XLSX.utils.book_append_sheet(wb, sheetOf(partnerAoa(monthData(m).partners), [26,12,8,14,12,14,14,12,10,8,40]), m));
   XLSX.writeFile(wb, `유통사업부_유통마진_전체_${ms[0]}_${ms[ms.length-1]}.xlsx`);
 }
 
@@ -1459,7 +1561,8 @@ async function testConnection() {
     const u = new URL(url); u.searchParams.set('action','ping');
     const j = await (await fetch(u.toString())).json();
     if (!j.ok) throw new Error(j.error);
-    msg.style.color='var(--green)'; msg.textContent='✓ 연결 성공';
+    if (!(j.version >= REQUIRED_API_VERSION)) { msg.style.color='var(--red)'; msg.textContent='⚠ 연결은 되지만 ' + OLD_SERVER_MSG; return; }
+    msg.style.color='var(--green)'; msg.textContent='✓ 연결 성공 (서버 버전 ' + j.version + ')';
   } catch (e) { msg.style.color='var(--red)'; msg.textContent='✗ 연결 실패: ' + e.message; }
 }
 function saveSettings() {
