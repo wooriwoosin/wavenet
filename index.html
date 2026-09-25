@@ -619,8 +619,8 @@ function loadFile(key, file) {
   const reader = new FileReader();
   reader.onload = e => {
     try {
-      const rows = parseHTMLTable(e.target.result);
-      if (!rows.length) throw new Error('데이터 없음');
+      const rows = parseFile(new Uint8Array(e.target.result));
+      if (!rows.length) throw new Error('데이터 없음 (조건에 맞는 행이 없습니다)');
       fileRows[key] = rows;
       document.getElementById('card_' + key).classList.add('loaded');
       const loaded = document.getElementById('loaded_' + key);
@@ -628,25 +628,45 @@ function loadFile(key, file) {
       loaded.textContent = '✓ ' + file.name + ' (' + rows.length + '행)';
       showErr('');
     } catch(err) {
-      showErr('파일 오류: ' + err.message);
+      console.error(err);
+      showErr('파일 오류 (' + file.name + '): ' + err.message);
     }
   };
-  reader.readAsText(file, 'euc-kr');
+  reader.onerror = () => showErr('파일을 읽을 수 없습니다: ' + file.name);
+  reader.readAsArrayBuffer(file);
 }
 
-function parseHTMLTable(html) {
-  const doc = new DOMParser().parseFromString(html, 'text/html');
-  const table = doc.querySelector('table');
-  if (!table) throw new Error('테이블 없음');
-  const allTr = Array.from(table.querySelectorAll('tr'));
-  if (allTr.length < 3) throw new Error('행 부족');
+// ── 파일 → 2차원 표(grid) ────────────────────────────────────────
+// 1) 전산에서 내려받은 HTML 표 형식 .xls (EUC-KR / UTF-8)
+// 2) 엑셀에서 다시 저장한 진짜 엑셀(.xlsx / .xls) · CSV
+function parseFile(bytes) {
+  const isZip = bytes[0]===0x50 && bytes[1]===0x4B;                                   // xlsx
+  const isOle = bytes[0]===0xD0 && bytes[1]===0xCF && bytes[2]===0x11 && bytes[3]===0xE0; // 구버전 xls
+  if (!isZip && !isOle) {
+    for (const enc of ['euc-kr', 'utf-8']) {
+      const text = new TextDecoder(enc).decode(bytes);
+      if (/<table/i.test(text) && text.includes('정산종류')) return gridToRows(htmlToGrid(text));
+    }
+  }
+  if (typeof XLSX === 'undefined') throw new Error('엑셀 라이브러리를 불러오지 못했습니다. 인터넷 연결 후 새로고침하세요.');
+  const wb = XLSX.read(bytes, { type:'array', codepage:949 });
+  for (const name of wb.SheetNames) {
+    const grid = sheetToGrid(wb.Sheets[name]);
+    if (grid.some(r => r.some(c => String(c).trim() === '정산종류'))) return gridToRows(grid);
+  }
+  throw new Error("'정산종류' 열을 찾을 수 없습니다. 상부정산/전체정산 원본 파일인지 확인하세요.");
+}
 
+function htmlToGrid(html) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const table = Array.from(doc.querySelectorAll('table')).find(t => t.textContent.includes('정산종류'));
+  if (!table) throw new Error('테이블 없음');
   const grid = [];
-  allTr.forEach((tr, ri) => {
+  Array.from(table.querySelectorAll('tr')).forEach((tr, ri) => {
     if (!grid[ri]) grid[ri] = [];
     let ci = 0;
     Array.from(tr.querySelectorAll('th,td')).forEach(cell => {
-      while (grid[ri][ci]) ci++;
+      while (grid[ri][ci] !== undefined) ci++;
       const text = cell.textContent.trim();
       const cs = parseInt(cell.getAttribute('colspan')||'1');
       const rs = parseInt(cell.getAttribute('rowspan')||'1');
@@ -657,10 +677,38 @@ function parseHTMLTable(html) {
       ci += cs;
     });
   });
+  return grid;
+}
 
-  const h1=grid[0]||[], h2=grid[1]||[];
-  const cols = h1.map((a,i) => {
-    const v1=(a||'').trim(), v2=(h2[i]||'').trim();
+function sheetToGrid(ws) {
+  const grid = XLSX.utils.sheet_to_json(ws, { header:1, raw:true, defval:'', blankrows:false })
+    .map(r => r.map(v => typeof v === 'string' ? v.trim() : v));
+  // 병합 셀은 HTML colspan/rowspan 과 같게 값을 채워 넣음 (2줄 헤더 처리용)
+  const origin = ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']).s : { r:0, c:0 };
+  (ws['!merges'] || []).forEach(m => {
+    const v = (grid[m.s.r - origin.r] || [])[m.s.c - origin.c];
+    for (let r=m.s.r; r<=m.e.r; r++) for (let c=m.s.c; c<=m.e.c; c++) {
+      const rr = r - origin.r, cc = c - origin.c;
+      if (!grid[rr]) grid[rr] = [];
+      grid[rr][cc] = v;
+    }
+  });
+  return grid;
+}
+
+// ── grid → 행 객체 (헤더 1줄/2줄 자동 인식) ───────────────────────
+function gridToRows(grid) {
+  const hi = grid.findIndex(r => (r||[]).some(c => String(c).trim() === '정산종류'));
+  if (hi < 0) throw new Error("'정산종류' 열을 찾을 수 없습니다.");
+  const h1 = grid[hi].map(v => String(v ?? '').trim());
+  const jtCol = h1.indexOf('정산종류');
+  const next = (grid[hi+1] || []).map(v => String(v ?? '').trim());
+  // 다음 줄의 '정산종류' 칸이 비었거나 같은 제목이면 → 2줄 헤더 (차감내역_물류 등)
+  const twoRow = next.length && (next[jtCol] === '' || next[jtCol] === '정산종류');
+  const h2 = twoRow ? next : [];
+  const width = Math.max(h1.length, h2.length);
+  const cols = Array.from({length:width}, (_,i) => {
+    const v1=h1[i]||'', v2=h2[i]||'';
     if (!v1&&!v2) return '__'+i;
     if (!v2||v1===v2) return v1;
     if (!v1) return v2;
@@ -668,10 +716,10 @@ function parseHTMLTable(html) {
   });
 
   const result = [];
-  for (let ri=2; ri<grid.length; ri++) {
+  for (let ri = hi + (twoRow?2:1); ri < grid.length; ri++) {
     const row = grid[ri]||[];
     const obj = {};
-    cols.forEach((c,i) => { obj[c] = row[i]!==undefined ? row[i] : ''; });
+    cols.forEach((c,i) => { obj[c] = row[i]!==undefined && row[i]!==null ? row[i] : ''; });
     const jt = String(obj['정산종류']||'').trim();
     if (!jt || jt==='현재 화면 정산 합계' || jt==='정산종류') continue;
     result.push(obj);
